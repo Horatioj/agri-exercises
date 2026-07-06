@@ -1,0 +1,57 @@
+countyid,var,year_start,year_end,note
+150785,real_gvp,1996,2004,low gvp values
+150785,inter_all_real,1996,2004,low values
+150784,real_gvp,1997,2004,low gvp values
+150784,inter_all_real,1997,2004,low values
+341281,real_gvp,2006,2008,low gvp values
+130131,real_gvp,2001,2005,low gvp values
+130403,real_gvp,1999,2010,jumpy gvp values
+140502,real_gvp,2001,2010,low gvp values
+150702,real_gvp,1983,1984,high gvp values
+150702,real_gvp,1997,2002,low gvp values
+150782,real_gvp,1997,2004,low gvp values
+152102,real_gvp,1997,2004,low gvp values
+152102,inter_all_real,1997,2004,low values
+152127,real_gvp,1997,2004,low gvp values
+152128,real_gvp,1997,2004,low gvp values
+152128,inter_all_real,1997,2000,low values
+152129,real_gvp,1997,2004,low gvp values
+152131,real_gvp,1997,2004,low gvp values
+152131,inter_all_real,1997,2004,low values
+152202,real_gvp,1997,2004,low gvp values
+152202,inter_all_real,1997,2004,low values
+152502,real_gvp,1997,2004,low gvp values
+152530,real_gvp,1997,2004,low gvp values
+152923,real_gvp,1997,2004,low gvp values
+219213,real_gvp,2002,2008,low gvp values
+210402,real_gvp,2002,2010,low gvp values
+210402,land_serv_q,2002,2013,low values
+210702,real_gvp,2006,2010,low gvp values
+210902,real_gvp,2002,2010,low gvp values
+210902,land_serv_q,2002,2013,low values
+211403,real_gvp,1999,2005,low gvp values
+220202,real_gvp,2000,2010,low gvp values
+230108,real_gvp,2000,2004,low gvp values
+230305,real_gvp,2002,2004,low gvp values
+230305,land_serv_q,2002,2008,low values
+230305,laborday_impute,2002,2008,low values
+230305,inter_all_real,2002,2008,low values
+360111,real_gvp,1998,2010,low gvp values
+360403,real_gvp,2006,2010,low gvp values
+370303,real_gvp,2003,2010,jumpy gvp values
+370634,real_gvp,2003,2005,low gvp values
+370923,real_gvp,2003,2005,low gvp values
+371202,real_gvp,2003,2005,low gvp values
+410505,real_gvp,2000,2002,low gvp values
+410505,laborday_impute,2000,2002,low values
+410505,inter_all_real,2000,2002,low values
+410505,land_serv_q,2000,2002,low values
+410602,real_gvp,1999,2008,low gvp values
+450302,real_gvp,2008,2010,low gvp values
+450303,real_gvp,2008,2010,low gvp values
+510205,real_gvp,2005,2010,low gvp values
+510104,real_gvp,2005,2010,low gvp values
+510106,real_gvp,2005,2010,low gvp values
+510108,real_gvp,2005,2010,low gvp values
+510302,real_gvp,2006,2010,low gvp values
+513226,real_gvp,2002,2010,high gvp values

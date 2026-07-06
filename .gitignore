@@ -1,0 +1,44 @@
+# ===== TFP_weather .gitignore =====
+# Track CODE + docs + small hand-curated inputs; ignore large raw/derived data,
+# figures, logs (all regenerable by running the pipeline).
+
+# --- raw / external data (large) ---
+/data/*
+!/data/manual_impute_list.csv
+!/data/ag_counties_crop15.csv
+*.dta
+*.rar
+/paper/
+
+# --- derived data & outputs (regenerable) ---
+/src/clean/
+/src/figures/
+/src/dq/
+/clean_files/
+/src/*.csv
+
+# --- editor / extension history (not project code) ---
+.specstory/
+.history/
+.vscode/
+.cursor/
+.idea/
+
+# --- logs / dumps / temp ---
+*.log
+*.smcl
+*.txt
+codebook_output.txt
+
+# --- python ---
+__pycache__/
+*.pyc
+*.pyo
+
+# --- R / Stata / editor cruft ---
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+*.stswp
+.DS_Store
