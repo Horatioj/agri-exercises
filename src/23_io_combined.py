@@ -25,7 +25,7 @@ import _common as C
 
 YV, X1, X2 = "real_gvp", "Laborday_impute", "Inter_all_real"
 iov = [YV, X1, "Land_serv_q", "capital_serv_q", X2]
-YEARS = [1985, 1995, 2005, 2015]
+YEARS = [1985, 1986, 1987, 1988, 1989, 1990, 1991, 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000, 2001, 2002, 2005, 2009, 2010, 2015]
 cols = plt.cm.plasma(np.linspace(0.05, 0.85, len(YEARS)))
 sL, sM, sY = 1e6, 1e6, 1e3
 LBL1, LBL2, LBLY = "Labour (M man-days)", "Intermediate (M, real)", "Real GVP (k)"

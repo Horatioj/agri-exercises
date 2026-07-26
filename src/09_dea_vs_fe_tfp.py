@@ -87,7 +87,7 @@ def dea_sequential(d):
         S[y]["f_own"] = fmax_vec(X, cumX, cumY)
         print(f"  [DEA] {y}: ref={len(cumY)} pts ({time.time()-t0:.0f}s)", flush=True)
     growth = {}
-    cyrows = []                                       # per-county Malmquist (year=b, countyid, lnM)
+    cyrows = []            # per-county Malmquist + decomposition (year=b)
     for a, b in zip(years[:-1], years[1:]):
         if b != a + 1:
             continue
@@ -99,20 +99,29 @@ def dea_sequential(d):
         f_b_b = sb["f_own"][ib]                       # f_b(x_b)
         f_a_b = fmax_vec(sb["X"][ib], sa["Rx"], sa["Ry"])   # f_a(x_b)
         f_b_a = fmax_vec(sa["X"][ia], sb["Rx"], sb["Ry"])   # f_b(x_a)
-        # phi^s(x) = f_s(x)/y ; Malmquist
+        # output distance D^s(x,y) = y / f_s(x)  (<=1 = efficiency)
+        # M = EFFCH x TECHCH  (Fare et al. 1994)
+        #   EFFCH  = D^b(x_b,y_b)/D^a(x_a,y_a)                    catch-up
+        #   TECHCH = sqrt[ (f_b_b/f_a_b) * (f_b_a/f_a_a) ]        frontier shift
         with np.errstate(divide="ignore", invalid="ignore"):
             M = np.sqrt(((f_a_a/ya)/(f_a_b/yb)) * ((f_b_a/ya)/(f_b_b/yb)))
-            lnM_all = np.log(M)                        # aligned with `common`
-        fin = np.isfinite(lnM_all)
+            EC = (yb / f_b_b) / (ya / f_a_a)
+            TC = np.sqrt((f_b_b / f_a_b) * (f_b_a / f_a_a))
+            lnM_all, lnEC, lnTC = np.log(M), np.log(EC), np.log(TC)
+            eff_a, eff_b = ya / f_a_a, yb / f_b_b       # efficiency levels
+        fin = np.isfinite(lnM_all) & np.isfinite(lnEC) & np.isfinite(lnTC)
         growth[b] = np.mean(lnM_all[fin])
         for k in np.where(fin)[0]:
-            cyrows.append((b, int(common[k]), float(lnM_all[k])))
-        print(f"  [DEA] {a}->{b}: {int(fin.sum())} cty, dlnTFP={growth[b]*100:+.2f}%", flush=True)
+            cyrows.append((b, int(common[k]), float(lnM_all[k]), float(lnEC[k]),
+                           float(lnTC[k]), float(eff_a[k]), float(eff_b[k])))
+        print(f"  [DEA] {a}->{b}: {int(fin.sum())} cty, dlnTFP={growth[b]*100:+.2f}% "
+              f"(EC {np.mean(lnEC[fin])*100:+.2f}, TC {np.mean(lnTC[fin])*100:+.2f})", flush=True)
     yrs = [years[0]] + [b for b in years[1:] if b in growth]
     lvl = [0.0]
     for b in yrs[1:]:
         lvl.append(lvl[-1] + growth[b])
-    county = pd.DataFrame(cyrows, columns=["year", "countyid", "lnM"])
+    county = pd.DataFrame(cyrows, columns=["year", "countyid", "lnM", "lnEC", "lnTC",
+                                           "eff_prev", "eff_now"])
     county.to_csv(os.path.join(C.CLEAN_DIR, "dea_malmquist_county.csv"), index=False)
     return pd.DataFrame({"year": yrs, "lntfp": lvl})
 
