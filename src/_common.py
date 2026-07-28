@@ -17,7 +17,7 @@ AGG_DTA    = os.path.join(DATA, "cty_prod_account_agg_forAXN.dta")
 GVP_DTA    = os.path.join(DATA, "agr_GVP.dta")        # GVP source
 LABOR_DTA  = os.path.join(DATA, "agr_labor.dta")      # labour source (agr_labor1)
 PRICE_DTA  = os.path.join(DATA, "priceindex_province.dta")
-AG_LIST    = os.path.join(DATA, "ag_counties_crop15.csv")  # cropland>=15% ag counties
+AG_LIST    = os.path.join(DATA, "ag_county", "ag_counties_crop15.csv")  # cropland>=15% ag counties
 BASE_DTA   = os.path.join(DATA, "base_panel.dta")     # assembled by 00_build_base_panel.do
 IO_RAW     = os.path.join(DATA, "io_raw_corrected.dta")  # corrected raw I-O (00e), input to 01
 

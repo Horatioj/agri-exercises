@@ -65,6 +65,8 @@ OVERRIDES = {
     621224: "remove",                                       # 康县 (keep 622625)
     152301: "remove",                                       # 通辽市
     610103: "remove",                                       # 碑林区
+    341281: "remove",                                       # 亳州市
+    362402: "remove",                                       # 井冈山市
 }
 # also honour the county_corrections.REMOVE list (duplicate codes / unusable units)
 for _c in CC.REMOVE:
@@ -116,9 +118,13 @@ for cid in g.groups:
     # 6/7 prefecture-level -> remove
     if is_prefecture(cid, names):
         rec["action"] = "remove_prefecture"; rows.append(rec); continue
-    # 5 combine (rename pairs)
+    # 5 combine (rename pairs) -- but if the CANONICAL target was removed by an
+    # override, drop the members too (otherwise a merge resurrects a removed code,
+    # e.g. 宁冈县 362432 -> 井冈山市 362402)
     if cid in combine_canon:
         canon = combine_canon[cid]
+        if OVERRIDES.get(canon) == "remove":
+            rec["action"] = "remove_override"; rows.append(rec); continue
         rec.update(action="combine", final_code=canon, final_name=combine_name[canon])
         rows.append(rec); continue
     # name match to ag (with typo-fixed names)

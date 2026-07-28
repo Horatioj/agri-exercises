@@ -41,7 +41,7 @@ C.ensure_dirs()
 # is almost always a data error -> stricter 3x; a DOWNWARD spike (drop then recover)
 # can be a real bad-harvest/weather year -> looser 5x.
 TAU_UP   = np.log(3.0)
-TAU_DOWN = np.log(5.0)
+TAU_DOWN = np.log(3.0)
 JUMP_THR = 0.30      # |Δln| threshold for the caliber synchronized-break scan
 JUMP_SHARE = 0.35    # share of county jumps in a year to call it a caliber candidate
 JUMP_MINN = 10       # require >=this many county jumps in a year before a caliber call
@@ -124,7 +124,7 @@ for v in C.IO_VARS:
 #     one neighbour, e.g. 654002 伊宁市 land 603 -> 4227 -> 70000, 玛多县 land, 临淄区.
 # ============================================================================
 TAU_END = np.log(3.0)
-JUMP5 = np.log(5.0)
+JUMP5 = np.log(3.0)
 def trim_run_idx(g, v):
     """NA a SHORT leading/trailing run (<=5 yrs) that is separated from the stable core
     by a BIG (>5x) year-on-year jump AND sits >3x off the post-jump core median.
@@ -324,8 +324,9 @@ print("\n6. Spike detection + imputation:")
 if len(alog):
     print(f"   flagged county-years: {len(alog)}  (over {agg.countyid.nunique()} counties x {len(C.IO_VARS)} vars)")
     print("   by action:", alog["action"].value_counts().to_dict())
-    print("   by class :", alog["cls"].value_counts().to_dict())
-    print("   by rule  :", alog["rule"].value_counts().to_dict())
+    for _c in ("cls", "rule"):                    # optional columns
+        if _c in alog.columns:
+            print(f"   by {_c:6s}:", alog[_c].value_counts().to_dict())
     print("   imputed cells per variable:")
     for v in C.IO_VARS:
         print(f"      {v:18s} flagged={int((alog['var']==v).sum()):4d}  imputed={int(agg[v+'_imp'].sum()):4d}")
