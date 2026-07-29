@@ -32,9 +32,14 @@ ALBERS = ("+proj=aea +lat_1=25 +lat_2=47 +lat_0=0 +lon_0=105 "
           "+x_0=0 +y_0=0 +ellps=krass +units=m +no_defs")     # China Albers equal-area
 SUF = re.compile(r"(自治县|自治旗|特区|林区|地区|盟|市|县|区|旗)$")
 
-# manual fixes for names that neither code, name, 曾用名 nor stem can resolve
-MANUAL = {"满州里市": "满洲里市", "霍县": "霍州市", "布特哈旗": "扎兰屯市",
-          "江浦县": "浦口区", "共青城市": "德安县"}
+# Manual fixes: ONLY true renames / administrative successions, never a
+# different place.  (共青城市 was deliberately dropped: it was carved out of
+# 德安县 + 永修县 + 星子县 in 2010, so mapping it onto 德安县 would paint one
+# county's TFP onto another.  It stays unmatched/grey.)
+MANUAL = {"满州里市": "满洲里市",   # typo: 州 -> 洲
+          "霍县": "霍州市",         # renamed 1989
+          "布特哈旗": "扎兰屯市",    # renamed 1983
+          "江浦县": "浦口区"}       # merged into 浦口区, 2002
 
 # ---------------------------------------------------------------- county TFP
 dea = pd.read_csv(os.path.join(C.CLEAN_DIR, "dea_malmquist_county.csv"))
