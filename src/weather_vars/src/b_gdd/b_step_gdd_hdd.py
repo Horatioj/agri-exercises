@@ -111,6 +111,72 @@ def load_season_lookup(csv_path: Path) -> dict:
 
 
 # ---------------------------------------------------------------- yearly core
+def year_monthly(year: int, temp_dir: Path, grid: dict):
+    """MONTHLY GDD/HDD grids (12,H,W) for one year -- the expensive pass.
+
+    Saving these makes every season definition cheap afterwards: a window is
+    just a set of months, so multi-peak / per-zone / per-pixel / fixed windows
+    can all be re-derived without touching the 25,550 daily rasters again.
+    """
+    H, W = grid["shape"]
+    zy = TempZipYear(temp_dir, year)
+    try:
+        mg = np.zeros((12, H, W), dtype="float32")
+        mh = np.zeros((12, H, W), dtype="float32")
+        bad = np.zeros((12, H, W), dtype=bool)
+        d = date(year, 1, 1)
+        for _ in range(366 if isleap(year) else 365):
+            tmin, tmax = zy.day(d.strftime("%Y%m%d"))
+            m = d.month - 1
+            if tmin is None:
+                bad[m] = True
+            else:
+                dd8 = dd_above(tmin, tmax, BASE_T)
+                dd32 = dd_above(tmin, tmax, CAP_T)
+                gdd_day, hdd_day = dd8 - dd32, dd32
+                nan = np.isnan(gdd_day)
+                mg[m] += np.where(nan, 0.0, gdd_day)
+                mh[m] += np.where(nan, 0.0, hdd_day)
+                bad[m] |= nan
+            d += timedelta(days=1)
+        for m in range(12):
+            mg[m] = np.where(bad[m], np.nan, mg[m])
+            mh[m] = np.where(bad[m], np.nan, mh[m])
+        return mg, mh
+    finally:
+        zy.close()
+
+
+def season_from_monthly(mg, mh, zone_raster, season_lookup, fixed_months):
+    """Aggregate monthly grids into one season total (gdd, hdd)."""
+    _, H, W = mg.shape
+    gdd = np.full((H, W), np.nan, dtype="float32")
+    hdd = np.full((H, W), np.nan, dtype="float32")
+
+    def accumulate(mask, months):
+        sg = np.zeros((H, W), "float32"); sh = np.zeros((H, W), "float32")
+        miss = np.zeros((H, W), bool)
+        for mo in months:
+            sg += np.where(np.isnan(mg[mo - 1]), 0.0, mg[mo - 1])
+            sh += np.where(np.isnan(mh[mo - 1]), 0.0, mh[mo - 1])
+            miss |= np.isnan(mg[mo - 1])
+        return mask & ~miss, sg, sh
+
+    if season_lookup:
+        for oid, months in season_lookup.items():
+            zmask = zone_raster == oid
+            if not zmask.any():
+                continue
+            ok, sg, sh = accumulate(zmask, months)
+            gdd = np.where(ok, sg, np.where(zmask, np.nan, gdd))
+            hdd = np.where(ok, sh, np.where(zmask, np.nan, hdd))
+    else:
+        ok, sg, sh = accumulate(np.ones((H, W), bool), fixed_months)
+        gdd = np.where(ok, sg, np.nan)
+        hdd = np.where(ok, sh, np.nan)
+    return gdd, hdd
+
+
 def year_gdd_hdd(year: int, temp_dir: Path, grid: dict,
                  zone_raster, season_lookup, fixed_months):
     """Return (gdd, hdd) 2-D arrays accumulated over the growing season."""
@@ -207,16 +273,26 @@ def main():
         print(f"[setup] fixed window = months {fixed_months}")
     print(f"[setup] GDD = DD({BASE_T:.0f}) - DD({CAP_T:.0f}); HDD = DD({CAP_T:.0f})  [single-sine]")
 
-    G, Hh = [], []
+    G, Hh, MG, MH = [], [], [], []
     t0 = time.time()
     for i, y in enumerate(years, 1):
         t = time.time()
-        g, h = year_gdd_hdd(y, temp_dir, grid, zone_raster, season_lookup, fixed_months)
+        mg, mh = year_monthly(y, temp_dir, grid)          # expensive pass, once
+        g, h = season_from_monthly(mg, mh, zone_raster, season_lookup, fixed_months)
+        MG.append(mg); MH.append(mh)
         print(f"  [{i:2d}/{len(years)}] {y} {time.time()-t:5.1f}s "
               f"GDD med={np.nanmedian(g):7.1f} max={np.nanmax(g):7.1f} | "
               f"HDD med={np.nanmedian(h):6.2f} max={np.nanmax(h):7.1f} "
               f"| n={int(np.isfinite(g).sum()):,d}", flush=True)
         G.append(g); Hh.append(h)
+
+    # monthly archive: lets any future season definition (multi-peak, per-pixel,
+    # per-zone) be derived in seconds instead of re-reading the daily rasters
+    mon_f = out_dir / f"monthly_gdd_hdd_{y0}_{y1}.npz"
+    np.savez_compressed(mon_f, years=np.array(years),
+                        gdd_month=np.stack(MG), hdd_month=np.stack(MH))
+    print(f"[save] {mon_f.name} ({mon_f.stat().st_size/1024**2:.0f} MB) "
+          f"-- monthly grids, reusable for any season window")
 
     tr = grid["transform"]; H, W = grid["shape"]
     lons = np.array([tr * (c + 0.5, 0.5) for c in range(W)])[:, 0].astype("float32")
