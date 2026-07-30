@@ -64,7 +64,7 @@ def seasonal_from_monthly(monthly, mask):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--monthly", default=str(GDD_DIR / "monthly_gdd_hdd_1982_2016.npz"))
+    ap.add_argument("--monthly", default=str(GDD_DIR / "monthly_gdd_hdd_1981_2016.npz"))
     ap.add_argument("--season", default=str(GDD_DIR / "season_mask_tempgrid.npz"))
     ap.add_argument("--weights", default=str(GDD_DIR / "cropland_frac_tempgrid.tif"))
     ap.add_argument("--force", action="store_true", help="redo the county aggregation")
@@ -107,11 +107,18 @@ def main():
             b = arr.copy(); b[np.isnan(b)] = -9999.0
             with rasterio.open(tmp, "w", **prof) as dst:
                 dst.write(b, 1)
-            df = exact_extract(str(tmp), g, ops=["weighted_mean"],
-                               weights=a.weights, include_cols=["code"],
-                               output="pandas")
-            col = [c for c in df.columns if c != "code"][0]
-            rows.append(df.rename(columns={col: name}).assign(year=int(y))[["code", "year", name]])
+            # cropland-weighted (headline) AND plain area mean.  The area mean
+            # never depends on the cropland raster, so it stays defined for
+            # counties with little/no mapped cropland and for years outside the
+            # CACD window -- useful as a robustness check.
+            wm = exact_extract(str(tmp), g, ops=["weighted_mean"],
+                               weights=a.weights, include_cols=["code"], output="pandas")
+            am = exact_extract(str(tmp), g, ops=["mean"],
+                               include_cols=["code"], output="pandas")
+            wm = wm.rename(columns={[c for c in wm.columns if c != "code"][0]: name})
+            am = am.rename(columns={[c for c in am.columns if c != "code"][0]: name + "_area"})
+            rows.append(wm.merge(am, on="code").assign(year=int(y))[
+                ["code", "year", name, name + "_area"]])
         if (i + 1) % 5 == 0:
             print(f"    {y} ({i+1}/{len(years)})  {time.time()-t0:.0f}s", flush=True)
     tmp.unlink(missing_ok=True)
@@ -121,7 +128,9 @@ def main():
         hdd_t = pd.concat([r for r in rows if "hdd" in r.columns]).reset_index(drop=True)
         cty = gdd_t.merge(hdd_t, on=["code", "year"], how="outer")
         cty = cty.rename(columns={"code": "map_code",
-                                  "gdd": "gdd_growing_season", "hdd": "hdd_growing_season"})
+                                  "gdd": "gdd_growing_season", "hdd": "hdd_growing_season",
+                                  "gdd_area": "gdd_growing_season_area",
+                                  "hdd_area": "hdd_growing_season_area"})
         cty.to_csv(cty_f, index=False)
         print(f"    saved {cty_f.name}  ({len(cty):,d} county-years, "
               f"{cty.map_code.nunique():,d} counties)")

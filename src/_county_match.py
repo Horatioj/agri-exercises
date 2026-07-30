@@ -29,7 +29,14 @@ SUF = re.compile(r"(自治县|自治旗|特区|林区|地区|盟|市|县|区|旗
 MANUAL = {"满州里市": "满洲里市",   # typo: 州 -> 洲
           "霍县": "霍州市",         # renamed 1989
           "布特哈旗": "扎兰屯市",    # renamed 1983
-          "江浦县": "浦口区"}       # merged into 浦口区, 2002
+          "江浦县": "浦口区",       # merged into 浦口区, 2002
+          "白郎县": "白朗县"}       # typo: 郎 -> 朗 (Tibet, 540228)
+
+# Malformed codes in the 2010 boundary file itself.  同仁县 carries a 7-digit
+# 6323211 instead of 632321 -- the only bad code among all 2,865 polygons.  Left
+# uncorrected it breaks BOTH the code match and the province-keyed name match
+# (6323211 // 10000 = 632, so the county never shares a province key).
+SHP_CODE_FIX = {6323211: 632321}
 
 
 def load_boundaries(shp: str = SHP_2010, crs="EPSG:4326"):
@@ -49,6 +56,7 @@ def load_boundaries(shp: str = SHP_2010, crs="EPSG:4326"):
     # 不设区的市 (东莞 441900, 中山 442000, 三亚, 嘉峪关) carry 县级码=0 but a
     # valid 区划码; drop the remaining code-0 rows (HK / Macao / Taiwan).
     g["code"] = code.where(code.fillna(0) > 0, gdiv)
+    g["code"] = g["code"].replace(SHP_CODE_FIX)
     g = g[g["code"].fillna(0) > 0].copy()
     g["code"] = g["code"].astype(int)
     g["prov"] = g["code"] // 10000
