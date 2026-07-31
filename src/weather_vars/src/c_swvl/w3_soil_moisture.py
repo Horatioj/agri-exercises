@@ -43,7 +43,15 @@ GDD_DIR = ROOT / "clean" / "gdd_hdd"
 SM_NC = Path(r"Z:/weather data/SM_data.nc")
 CACD = Path(r"Z:/weather data/cropland/CACD-2000.tif")
 NDVI_TR = None            # filled from the season file's source grid
-LAYER_W = np.array([0.07, 0.21, 0.72])          # ERA5 0-7 / 7-28 / 28-100 cm
+# ERA5 layer depths: swvl1 0-7cm, swvl2 7-28cm, swvl3 28-100cm.
+# A 0-100cm depth weighting puts 0.72 on layer 3, which then DOMINATES the
+# average -- but 28-100cm is not a meaningful rooting depth in much of China
+# (thin soils on the plateau, and annual cereals root mostly in the top ~30cm).
+# So we no longer impose one root-zone definition: every layer is emitted
+# separately, plus a 0-28cm combination (the agronomically defensible root zone
+# for annual crops) and the legacy 0-100cm for comparison.
+W_0_100 = np.array([0.07, 0.21, 0.72])          # legacy deep root zone
+W_0_28 = np.array([0.07, 0.21, 0.00]) / 0.28    # 0-28cm, renormalised
 
 
 def cropland_fraction(cacd_tif, dst_transform, dst_shape):
@@ -104,35 +112,42 @@ def main():
 
     print("[4] growing-season means by year")
     sw = np.stack([ds[f"swvl{i}"].values for i in (1, 2, 3)])        # (3,T,H,W)
-    rz = np.tensordot(LAYER_W, sw, axes=(0, 0))                      # (T,H,W)
-    sh = sw[0]
+    SERIES = {
+        "sm_0_28":   np.tensordot(W_0_28, sw, axes=(0, 0)),    # root zone, annual crops
+        "rzsm_gs":   np.tensordot(W_0_100, sw, axes=(0, 0)),   # legacy 0-100cm
+        "swvl1_gs":  sw[0],                                    # 0-7cm  surface
+        "swvl2_gs":  sw[1],                                    # 7-28cm
+        "swvl3_gs":  sw[2],                                    # 28-100cm
+    }
     years = sorted({int(x) for x in t.year})
     mon = t.month.values; yr = t.year.values
-    RZ, SH = [], []
+    OUT = {k: [] for k in SERIES}
     for y in years:
-        num_r = np.zeros(sm_shape, "float64"); num_s = np.zeros(sm_shape, "float64")
         cntm = np.zeros(sm_shape, "float64")
+        num = {k: np.zeros(sm_shape, "float64") for k in SERIES}
         for m in range(1, 13):
-            k = np.where((yr == y) & (mon == m))[0]
-            if len(k) == 0:
+            k_ = np.where((yr == y) & (mon == m))[0]
+            if len(k_) == 0:
                 continue
             inseason = mask_sm[m - 1]
-            num_r += np.where(inseason, rz[k[0]], 0.0)
-            num_s += np.where(inseason, sh[k[0]], 0.0)
+            for k, arr in SERIES.items():
+                num[k] += np.where(inseason, arr[k_[0]], 0.0)
             cntm += inseason.astype("float64")
         with np.errstate(invalid="ignore", divide="ignore"):
-            RZ.append(np.where(cntm > 0, num_r / cntm, np.nan).astype("float32"))
-            SH.append(np.where(cntm > 0, num_s / cntm, np.nan).astype("float32"))
-    RZ = np.stack(RZ); SH = np.stack(SH)
-    print(f"    rzsm {np.nanmean(RZ[0]):.4f} ({years[0]}) -> {np.nanmean(RZ[-1]):.4f} ({years[-1]}) m3/m3")
+            for k in SERIES:
+                OUT[k].append(np.where(cntm > 0, num[k] / cntm, np.nan).astype("float32"))
+    OUT = {k: np.stack(v) for k, v in OUT.items()}
+    for k, v in OUT.items():
+        print(f"    {k:11s} {np.nanmean(v[0]):.4f} ({years[0]}) -> "
+              f"{np.nanmean(v[-1]):.4f} ({years[-1]}) m3/m3")
 
-    xr.Dataset({"rzsm_gs": (("year", "lat", "lon"), RZ),
-                "sm_shallow_gs": (("year", "lat", "lon"), SH)},
+    _ds_out = xr.Dataset({k: (("year", "lat", "lon"), v) for k, v in OUT.items()},
                coords={"year": years, "lat": lat, "lon": lon},
-               attrs={"source": "ERA5 monthly swvl1-3",
-                      "rzsm": "depth-weighted 0-100cm (.07/.21/.72)",
-                      "season": "cropland-NDVI growing season (W1)"}) \
-        .to_netcdf(GDD_DIR / "sm_growing_season_1981_2016.nc")
+               attrs={"source": "ERA5 monthly swvl1-3 (0-7 / 7-28 / 28-100 cm)",
+                      "sm_0_28": "root zone for annual crops, layers 1-2 renormalised",
+                      "rzsm_gs": "legacy 0-100cm (.07/.21/.72) - layer 3 dominates",
+                      "season": "cropland-NDVI growing season (W1)"})
+    _ds_out.to_netcdf(GDD_DIR / "sm_growing_season_1981_2016.nc")
 
     print("[5] county aggregation (cropland-weighted AND plain area mean)")
     g = load_boundaries()
@@ -144,7 +159,8 @@ def main():
     t0 = time.time()
     for i, y in enumerate(years):
         rec = None
-        for name, arr in (("rzsm_gs", RZ[i]), ("sm_shallow_gs", SH[i])):
+        for name in SERIES:
+            arr = OUT[name][i]
             b = arr.copy(); b[np.isnan(b)] = -9999.0
             with rasterio.open(tmp, "w", **prof) as d:
                 d.write(b, 1)
