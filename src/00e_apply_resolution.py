@@ -44,6 +44,28 @@ agg = agg[["countyid", "county_name", "SID", "state", "year"] + VALVARS].sort_va
 agg["countyid"] = agg["countyid"].astype(int)
 agg["year"] = agg["year"].astype(int)
 
+# ---------------------------------------------------------------------------
+# AGRICULTURAL-COUNTY FILTER (default ON; --keep-all to disable)
+# Restrict the panel to the cropland-defined agricultural counties, i.e. the
+# `in_ag_list` flag from county_roster_final.csv (cropland >= 15% in the
+# ag_counties_crop15 set).  Previously the panel was the UNION of all rural
+# county-level units plus the ag districts; the analysis sample is now the ag
+# set alone.
+# The flag is county-level and time-invariant, so a county that qualifies is
+# kept for ALL its years -- there is no year-by-year entry/exit.
+# ---------------------------------------------------------------------------
+if "--keep-all" not in sys.argv:
+    roster = pd.read_csv(os.path.join(C.DATA, "county_roster_final.csv"), encoding="utf-8-sig")
+    ag_codes = set(roster.loc[roster["in_ag_list"] == True, "final_code"].astype(int))
+    n0, c0 = len(agg), agg["countyid"].nunique()
+    agg = agg[agg["countyid"].isin(ag_codes)].copy()
+    print(f"\nAG-COUNTY FILTER: kept {agg['countyid'].nunique():,d} of {c0:,d} counties "
+          f"({len(agg):,d} of {n0:,d} rows); dropped {c0 - agg['countyid'].nunique():,d} "
+          f"non-cropland units")
+    yrs = agg.groupby("countyid")["year"].nunique()
+    print(f"  years per kept county: min {yrs.min()}, median {int(yrs.median())}, max {yrs.max()}"
+          f"  (county-level flag => all years retained)")
+
 agg.to_csv(os.path.join(C.DATA, "io_raw_corrected.csv"), index=False, encoding="utf-8-sig")
 agg.to_stata(os.path.join(C.DATA, "io_raw_corrected.dta"), write_index=False, version=118)
 
