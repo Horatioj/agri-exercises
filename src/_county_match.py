@@ -10,7 +10,7 @@ match is attempted in four decreasing-confidence passes:
     4. NAME STEM with the 市/县/区/旗... suffix stripped, same province
 Anything still unmatched is returned as NaN and must be reported, never guessed.
 
-Shared by 27_map_tfp.py (TFP maps) and the weather join, so both use identical
+Shared by the TFP maps and the weather join, so both use identical
 county correspondence.
 """
 from __future__ import annotations

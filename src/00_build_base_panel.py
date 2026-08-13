@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 STEP 0 — Assemble the base county production panel from THREE sources, then save
-to data/base_panel.dta for the cleaning step (01_clean_panel.py).
+to data/base_panel.dta for the cleaning step (03_clean_panel.py).
 
   output GVP      <- data/agr_GVP.dta        (GVP_allagr_impute, 10k RMB)
   labour          <- data/agr_labor.dta      (agr_labor1 -> labor number)

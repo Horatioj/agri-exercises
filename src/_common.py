@@ -17,7 +17,15 @@ AGG_DTA    = os.path.join(DATA, "cty_prod_account_agg_forAXN.dta")
 GVP_DTA    = os.path.join(DATA, "agr_GVP.dta")        # GVP source
 LABOR_DTA  = os.path.join(DATA, "agr_labor.dta")      # labour source (agr_labor1)
 PRICE_DTA  = os.path.join(DATA, "priceindex_province.dta")
-AG_LIST    = os.path.join(DATA, "ag_county", "ag_counties_crop15.csv")  # cropland>=15% ag counties
+# Agricultural-county definition: cropland >= 15% in ANY year 1986-2015 (the
+# UNION), built by 00_cropland_share.py from the annual CACD 30 m rasters.
+# The older ag_counties_crop15.csv used 2010 ALONE, which is the LOWEST-count
+# year of the whole series -- it dropped ~170 counties that farmed for much of
+# the panel and had urbanised by 2010, conditioning the sample on the very
+# transition the paper studies.  Set AG_LIST back to that file to reproduce
+# the old sample.
+AG_LIST    = os.path.join(DATA, "ag_county", "ag_counties_union_aglist.csv")
+AG_LIST_2010 = os.path.join(DATA, "ag_county", "ag_counties_crop15.csv")  # superseded
 BASE_DTA   = os.path.join(DATA, "base_panel.dta")     # assembled by 00_build_base_panel.do
 IO_RAW     = os.path.join(DATA, "io_raw_corrected.dta")  # corrected raw I-O (00e), input to 01
 
@@ -70,7 +78,7 @@ def apply_geography_filter(df, keep_codes=None):
     """Return (kept_df, dropped_df) after removing urban districts + aggregate rows.
 
     keep_codes: countyids exempt from the district/aggregate drop (e.g. 撤县设区
-    agricultural counties harmonised in county_corrections.CANON_KEEP).
+    agricultural counties harmonised in _county_corrections.CANON_KEEP).
     """
     keep_codes = set(keep_codes or ())
     d = df.copy()
@@ -114,6 +122,51 @@ def provincial_median_ln(df, var):
     v = pd.to_numeric(df[var], errors="coerce")
     lnv = np.log(v.where(v > 0))
     return lnv.groupby([df["SID"], df["year"]]).median()
+
+
+def provincial_ref_ln(df, var, method="chain"):
+    """Provincial ln reference path per (SID, year).
+
+    method="level"  per-(SID,year) MEDIAN of ln(value).  Simple, but it moves when
+                    the SET of counties reporting changes, and it inherits any
+                    province-wide level break straight into the reference the
+                    imputation rides.
+    method="chain"  median of year-on-year log CHANGES over the counties observed
+                    in BOTH years, cumulated into a path.  Each link uses a fixed
+                    set of counties, so entry/exit cannot move the reference, and
+                    a level break in any single county shifts only its own link.
+                    Anchored to the province's first-year median level so the
+                    result is on the same scale as method="level".
+    """
+    v = pd.to_numeric(df[var], errors="coerce")
+    lnv = np.log(v.where(v > 0))
+    if method == "level":
+        return lnv.groupby([df["SID"], df["year"]]).median()
+
+    t = pd.DataFrame({"SID": df["SID"].to_numpy(), "cid": df["countyid"].to_numpy(),
+                      "year": df["year"].to_numpy(), "ln": lnv.to_numpy()})
+    t = t.dropna(subset=["ln"]).sort_values(["cid", "year"])
+    t["d"] = t.groupby("cid")["ln"].diff()
+    t["gap"] = t.groupby("cid")["year"].diff()
+    step = t[(t["gap"] == 1) & t["d"].notna()].groupby(["SID", "year"])["d"].median()
+    lvl = lnv.groupby([df["SID"], df["year"]]).median()
+
+    keys, vals = [], []
+    for sid, s in step.groupby(level=0):
+        s = s.droplevel(0).sort_index()
+        lv = lvl.loc[sid].dropna().sort_index()
+        if lv.empty:
+            continue
+        y0 = int(s.index.min()) - 1
+        acc = float(lv.get(y0, lv.iloc[0]))
+        keys.append((sid, y0)); vals.append(acc)
+        for y, dd in s.items():
+            acc += float(dd)
+            keys.append((sid, int(y))); vals.append(acc)
+    if not keys:
+        return lvl
+    return pd.Series(vals, index=pd.MultiIndex.from_tuples(keys, names=["SID", "year"])
+                     ).sort_index()
 
 
 def impute_stretch(cser, Rsid, t1, t2):
