@@ -60,8 +60,20 @@ C.ensure_dirs()
 # Asymmetric spike-and-revert thresholds: an UPWARD spike (value jumps up then back)
 # is almost always a data error -> stricter 3x; a DOWNWARD spike (drop then recover)
 # can be a real bad-harvest/weather year
-TAU_UP   = np.log(3.0)
-TAU_DOWN = np.log(3.0)
+# Detector thresholds. Env-overridable so the sensitivity of the cleaning
+# footprint to the cut-off can be measured (see 05_cleaning_audit.py) rather than
+# argued about: a detector that fires on a tenth of the panel is describing normal
+# variation, not anomalies.
+#
+# Default 5.0 (restored from 3.0).  Measured on this panel: at 3x the cleaning
+# touched 11.88% of county-years -- over the 10% budget -- and only 19.4% of the
+# boundary-run splice factors sat within 0.10 dex of a power of ten.  At 5x the
+# footprint is 7.73% of county-years (2.21% of cells) and 27.3% of factors are
+# decimal-like, i.e. the stricter cut throws away proportionally more of the runs
+# that were NOT unit errors.  Loosening to 3.0 mainly adds genuine variation.
+_T = lambda k, d: np.log(float(os.environ.get(k, d)))
+TAU_UP   = _T("TAU_UP", 5.0)      # upward spike (more likely an error)
+TAU_DOWN = _T("TAU_DOWN", 5.0)    # downward spike (could be a real bad year)
 JUMP_THR = 0.30      # |Δln| threshold for the caliber synchronized-break scan
 JUMP_SHARE = 0.35    # share of county jumps in a year to call it a caliber candidate
 JUMP_MINN = 10       # require >=this many county jumps in a year before a caliber call
@@ -122,6 +134,19 @@ miss = agg["real_gvp"].isna().sum() - agg["GVP_allagr_impute"].isna().sum()
 print(f"4. Deflated GVP -> real_gvp using province {C.PPI_COL} "
       f"(rows with GVP but no deflator: {max(miss,0)})")
 
+# ----------------------------------------------------------------------------
+# Snapshot the TRUE original NOW, before any cleaning rule fires.  It used to be
+# taken after 4b/4c/4d, which meant <var>_raw was not the original at all: every
+# value those steps set to NA or rescaled was already gone from it, so the review
+# SVGs drew a "raw" line that had been partly cleaned and the audit could not see
+# those edits.  Taken here, <var>_raw is what arrived from the source, so
+# 05_imputation_audit.py counts every modification and 04's grey line shows what
+# was actually replaced.
+# ----------------------------------------------------------------------------
+for v in C.IO_VARS:
+    agg[v + "_raw"] = agg[v].astype(float)
+    agg[v + "_imp"] = False
+
 # ============================================================================
 # 4b. ERROR -> NA: zeros in inputs, and tiny "low-then-jump" values (>1000x below
 #     the county's own median of positive values) are data errors, not real
@@ -145,8 +170,8 @@ for v in C.IO_VARS:
 #     >3x off the local stable median -- catches multi-year boundary spikes with only
 #     one neighbour, e.g. 654002 伊宁市 land 603 -> 4227 -> 70000, 玛多县 land, 临淄区.
 # ============================================================================
-TAU_END = np.log(3.0)
-JUMP5 = np.log(3.0) # set 3.0 now instead of 5.0
+TAU_END = _T("TAU_END", 5.0)      # run sits this far off the post-jump core
+JUMP5   = _T("JUMP5", 5.0)        # size of the boundary discontinuity
 def trim_runs(g, v):
     """Find a SHORT leading/trailing run (<=5 yrs) separated from the stable core by a
     BIG (>JUMP5) year-on-year jump AND sitting >TAU_END off the post-jump core median.
@@ -196,7 +221,7 @@ def trim_runs(g, v):
 # where the frontier and the growth endpoints are most sensitive.  Rescaling
 # removes the break and keeps the shape.  Every factor is written to the anomaly
 # log, and <var>_raw preserves the original, so the operation stays reversible.
-BOUNDARY_RUN_MODE = os.environ.get("BOUNDARY_RUN_MODE", "rescale")
+BOUNDARY_RUN_MODE = os.environ.get("BOUNDARY_RUN_MODE", "decimal")
 _run_log = []
 for v in C.IO_VARS:
     runs = [(ix, f) for _, g in agg.groupby("countyid") for ix, f in trim_runs(g, v)]
@@ -256,10 +281,11 @@ for v in C.IO_VARS:
     agg.loc[flags, v] = np.nan
     print(f"4d. {v:18s}: {len(flags):4d} cross-county placeholder cells -> NA")
 
-# keep a raw (pre-impute) copy of each I-O variable
+# <var>_raw was snapshotted before 4b (see above); do NOT overwrite it here or the
+# NA/rescale steps become invisible again.  Only ensure the _imp flags exist.
 for v in C.IO_VARS:
-    agg[v + "_raw"] = agg[v].astype(float)
-    agg[v + "_imp"] = False
+    if v + "_imp" not in agg.columns:
+        agg[v + "_imp"] = False
 
 # ============================================================================
 # 5. CALIBER YEARS — province synchronized breaks; require mannual check, not yet implemented

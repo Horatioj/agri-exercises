@@ -12,7 +12,6 @@ ESTIMATORS
   DEA    sequential-NIRS Malmquist, county lnM        (20_dea_vs_fe_tfp.py)
   SFA    BC92 land-normalized, d ln_tfp_chen          (21_sfa_bc92.do, full panel)
   SOL    CRS Solow residual, county-level             (transparent cross-check)
-  SFA1k  BC92 on the converged 1,000-county subsample (21_sfa_bc92.do sub1000)
 
 WEIGHTING
   simple   : equal weight per county
