@@ -71,9 +71,12 @@ brackets the truth. In this application the contrast is sharp and diagnostic:
   DEA attributes to catch-up and SFA does not identify. This is not a contradiction: it is
   the decomposition made visible by using both methods.
 
-*(Both figures are on the current ~1,800-county cropland-defined agricultural sample, from
-`30_aggregate_tfp.py`. Earlier drafts quoted +3.97%/yr for DEA on the broader ~2,600-county
-panel, before the cropland≥15% filter.)*
+*(Sample note. Those figures are from `30_aggregate_tfp.py` on the UNION sample. The
+agricultural-county rule has since been tightened to cropland ≥ 15% in EVERY raster year
+(1,975 → **1,718 counties**, README §1), and the estimation window now starts in **1985**,
+so both numbers await re-estimation. What is already measured on the new footing: DEA TFP
+growth is **4.24 %/yr** on the full sample and **4.15 %/yr** with the sixteen audited
+leverage counties removed — see §8b.)*
 
 ---
 
@@ -111,21 +114,46 @@ counties away from best practice; it does not destroy the technology).
 
 Each requires four LPs per county-year: f<sup>a</sup>(x<sub>a</sub>), f<sup>b</sup>(x<sub>b</sub>),
 f<sup>a</sup>(x<sub>b</sub>), f<sup>b</sup>(x<sub>a</sub>). Implemented in Python
-(`src/20_dea_vs_fe_tfp.py`) because ~350k LPs are infeasible in Stata's ado-based DEA;
+(`src/20_dea_tfp.py`) because ~350k LPs are infeasible in Stata's ado-based DEA;
 all **econometric analysis** of the resulting indices is done in Stata.
 
 ---
 
-## 4. SFA: land-normalized stochastic frontier
+## 4. SFA: NIRS stochastic frontier
 
-### 4.1 Specification
-Imposing **CRS by land-normalization** (dividing output and all inputs by land service)
-avoids the biased returns-to-scale that plague within-estimators here:
+### 4.1 Returns to scale — matched to DEA, not imposed as CRS
+The SFA now carries the **same returns-to-scale assumption as §3: NIRS**. Earlier drafts
+imposed **CRS by land-normalisation** (dividing output and every input by land service)
+while §3 solved the DEA LP under Σλ ≤ 1. NIRS *permits* decreasing returns and only rules
+out increasing returns, so the two frontiers were answering different questions and the
+gap fell straight into measured TFP.
 
-&nbsp;&nbsp;&nbsp;&nbsp;ln(y/S)<sub>it</sub> = α + β<sub>L</sub> ln(L/S) + β<sub>K</sub> ln(K/S) + β<sub>M</sub> ln(M/S) + λ<sub>t</sub> + v<sub>it</sub> − u<sub>it</sub>
+NIRS is an **inequality**, so it is handled by the KKT argument rather than imposed:
 
-with v ~ N(0, σ<sub>v</sub><sup>2</sup>) noise and u ≥ 0 inefficiency. Year dummies λ<sub>t</sub>
-(base 2005) trace **neutral technical change**; SEs clustered by county.
+1. estimate **unrestricted** (variable returns);
+2. read RTS off the fit — with the logs mean-centred it is the sum of the four
+   first-order coefficients, which is exact for Cobb-Douglas;
+3. **RTS ≤ 1 → the constraint is slack**, and the unrestricted fit *is* the NIRS fit;
+4. **RTS > 1 → it binds**, and the optimum sits on the boundary RTS = 1, applied by
+   land-normalisation (`sfpanel` refuses `constraints()` together with `vce(cluster)`,
+   and clustered SEs over ~1,700 counties are worth more than writing the restriction out).
+
+On every run so far step 3 fires: RTS ≈ 0.44–0.49, far inside NIRS, so the CRS branch has
+never been used.
+
+&nbsp;&nbsp;&nbsp;&nbsp;ln y<sub>it</sub> = α + β<sub>L</sub> l̃n L + β<sub>S</sub> l̃n S + β<sub>K</sub> l̃n K + β<sub>M</sub> l̃n M + λ<sub>t</sub> + v<sub>it</sub> − u<sub>it</sub>
+
+with v ~ N(0, σ<sub>v</sub><sup>2</sup>) noise, u ≥ 0 inefficiency, and l̃n x mean-centred so
+the first-order coefficients read as elasticities *at the sample mean*. Year dummies
+λ<sub>t</sub> (base 2005) trace **neutral technical change**; SEs clustered by county.
+Land is now estimated **directly** (`cS`) rather than recovered as the 1 − β<sub>L</sub> −
+β<sub>K</sub> − β<sub>M</sub> residual it was under normalisation, and `_tfp.BETA_AG` reads
+the coefficients live from `sfa_surface_coefs.csv`.
+
+**Translog was tried and dropped.** A 14-term specification (4 squares + 6
+cross-products) stuck at log-likelihood −44,403 for twelve straight iterations, flagged
+`(not concave)` throughout and never clearing, while the Cobb-Douglas run converged by
+iteration 18. Point-varying elasticities are pursued outside the BC92 estimation.
 
 ### 4.2 TFP construction (Chen-style)
 &nbsp;&nbsp;&nbsp;&nbsp;**ln TFP<sub>it</sub> = (α + λ<sub>t</sub>) − u<sub>it</sub>**
@@ -138,16 +166,27 @@ driven by input growth.
 | Model | Heterogeneity control | Outcome on this panel |
 |---|---|---|
 | Pooled `frontier` | none | Converges instantly; **σ<sub>u</sub> → 0** (wrong skewness) |
-| `sfpanel, bc92` | none (persistent heterogeneity → u) | **Converges on the ~1,832-county AGRICULTURAL sample** (N=58,914, 17 iterations, ~42 min): σ²<sub>u</sub>=0.2355, σ²<sub>v</sub>=0.1044, γ=0.693, η=−0.0064. Did not converge on the older ~2,500-county panel |
+| `sfpanel, bc92` | none (persistent heterogeneity → u) | **Converges.** Last completed run (1,959 counties, sixteen leverage counties excluded, N=60,389, 15 iterations, ~27 min): RTS=0.4864, σ²<sub>u</sub>=0.2920, σ²<sub>v</sub>=0.0796, γ=0.786, η=+0.0001 (p=0.86), mean TE=0.235. On the full union sample (1,975 counties): RTS=0.4549, mean TE=0.123. **Both predate the strict 1,718-county sample and need re-running.** |
 | `sfpanel, tfe` | full county FE (Greene 2005) | **Never converges** (incidental parameters, 2,505 nuisance parameters) |
 
 **Key methodological point:** BC92 is a *panel time-decay* model — it identifies u from the
 **persistent panel component**, not from the skewness of the composed error. Hence it
 recovers σ<sub>u</sub> > 0 even where pooled SFA cannot. Its efficiency *levels* are
-implausibly low (mean TE ≈ 0.064) because without a heterogeneity term persistent county
-differences are mislabeled as inefficiency; but with η ≈ −0.008 (near time-invariant
-inefficiency) the *growth* series is unaffected. **Therefore: use BC92 for TFP growth, not
-for efficiency levels.**
+implausibly low because without a heterogeneity term persistent county differences are
+mislabelled as inefficiency; and η is statistically zero (+0.0001, p = 0.86), so the model
+has degenerated to **time-invariant** inefficiency — what it calls inefficiency is a county
+fixed effect. **Therefore: use BC92 for TFP growth, not for efficiency levels.**
+
+**Why RTS ≈ 0.45 rather than the ≈ 0.85 the pooled data show.** BC92 puts persistent county
+heterogeneity into u<sub>i</sub>, so the slopes are identified from WITHIN-county variation.
+On the same sample, pooled OLS gives RTS 0.844 and the between estimator 0.859, but the
+within estimator gives **0.483 with a negative labour coefficient**. The reason is
+measurable: only **13.3%** of labour's variance and **16.8%** of land's is within-county, so
+at that signal-to-noise ratio classical measurement error attenuates both toward zero.
+Capital is the opposite problem — 61.6% within, but its year-on-year change correlates
+**+0.03** with farm machinery horsepower and **+0.10** with intermediates, i.e. it carries
+almost no county-specific annual signal, which is why β<sub>K</sub> is indistinguishable
+from zero in every specification.
 
 ---
 
@@ -214,21 +253,62 @@ the cleaned panel carries real economic signal.
 | Cropland share → ag-county definition | `src/00_cropland_share.py` | Python (raster) |
 | Data cleaning | `src/00`–`src/04` | Python |
 | Weather variables | `src/10`–`src/14` | Python (raster) |
-| DEA sequential-NIRS Malmquist + EFFCH/TECHCH | `src/20_dea_vs_fe_tfp.py` | Python (LP) |
-| SFA pooled / BC92 / subsample | `src/21_sfa_bc92.do` | **Stata** |
+| DEA sequential-NIRS Malmquist + EFFCH/TECHCH | `src/20_dea_tfp.py` | Python (LP) |
+| SFA BC92, Cobb-Douglas, NIRS | `src/21_sfa_bc92.do` | **Stata** |
 | Descriptive statistics & moments | `src/22_descriptives.do` | **Stata** |
+| I-O + index descriptives, plotted ranges, scale check | `src/24_io_index_descriptives.py` | Python |
 | Framework analysis, decomposition & comparison tables | `src/23_dea_sfa_framework.do` | **Stata** |
 | Aggregation & stage analysis | `src/30_aggregate_tfp.py` | Python |
 | Volatility diagnostics | `src/31_volatility.py` | Python |
 | CPS four-component decomposition | `src/40`, `src/41` | Python (LP) |
-| Figures | `src/50`–`src/55` | Python |
+| Frontier & isoquant figures (one engine) | `src/52_frontier_figs.py` + `src/_frontier.py` | Python |
+| Weather figures incl. the f(x, w) surface | `src/56_weather_figs.py` | Python |
+| Frontier composition audit | `src/59_frontier_audit.py` | Python (LP) |
+| Leave-one-out sensitivity | `src/60_leave_one_out.py` | Python (LP) |
+| Screening dashboards (HTML maps) | `src/61_screening_dashboard.py` | Python |
 
 Econometric estimation and inference are done in Stata; linear programming (DEA) and
 data engineering in Python.
 
-The Törnqvist aggregator, the winsorizing rule, the Solow elasticities, the five reform
-stages and the period cuts all live in `src/_tfp.py` and are imported everywhere, so a
-change to any of them cannot apply to one table of the paper and not another.
+The input index, the winsorizing rule, the elasticities, the five reform stages and the
+period cuts live in `src/_tfp.py`; **every frontier estimator** lives in `src/_frontier.py`.
+Both are imported everywhere, so a change cannot apply to one table of the paper and not
+another. Three scripts (`52_`, `53_`, `58_`) once held private copies of the same boundary
+and had silently drifted apart — that is why the estimators were centralised.
+
+**One naming correction that matters for the text.** What the code builds is a
+**fixed-weight geometric (Cobb-Douglas) index**, not a Törnqvist. A Törnqvist is a chained
+bilateral index between adjacent periods using period-specific cost shares averaged across
+the two; this is a cross-sectional level index with one constant weight vector from a
+single BC92 estimate. They coincide only if the shares do not move over time.
+
+---
+
+## 8b. How much of this rests on a handful of counties
+
+`59_frontier_audit.py` and `60_leave_one_out.py` answer that directly, and the answer
+disciplines which numbers can be quoted.
+
+| | full sample | 16 leverage counties removed | change |
+|---|---|---|---|
+| DEA TFP growth | 4.24 %/yr | 4.15 %/yr | **−2.1%** |
+| DEA mean efficiency | 0.187 | 0.228 | **+22%** |
+| SFA mean efficiency | 0.123 | 0.235 | **+91%** |
+| EFFCH | −1.72 %/yr | −1.04 %/yr | **−39%** |
+| TECHCH | +6.01 %/yr | +5.24 %/yr | **−13%** |
+
+**Growth is robust; levels and the decomposition are not.** The Malmquist index is a ratio
+between adjacent years, so a frontier held up by the same counties in both years cancels
+out. The EFFCH/TECHCH split does not cancel: its two halves move 39% and 13% in opposite
+directions and nearly offset, which is why the total moves only 2%. The split is the
+headline advantage of DEA over SFA in §2 and it is the number most exposed here.
+
+Who these counties are: peri-urban districts (丰台, 闵行, 青浦, 江干, 普陀 …) and
+island/coastal specialty counties (长岛, 洞头, 岱山, 荣成 …). Their values are **not**
+data errors — the series are smooth in time and internally consistent — they are genuinely
+specialised units whose output-per-input ratio sits at the 99.8th percentile. The strict
+cropland rule removes 6 of the 16; the rest clear ≥15% cropland every year and can only be
+separated by county-type indicators, not by a cropland threshold.
 
 ---
 
