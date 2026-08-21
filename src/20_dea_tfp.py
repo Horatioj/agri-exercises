@@ -1,49 +1,38 @@
 # -*- coding: utf-8 -*-
 """
-Compare two TFP methodologies on the CLEANED panel, BOTH with all 4 inputs
-(Labour, Land, Capital, Intermediate), single output real_gvp:
+DEA TFP on the CLEANED panel: all 4 inputs (Labour, Land, Capital, Intermediate),
+single output real_gvp.
 
-  (A) FE Solow residual  -- two-way (county+year) FE Cobb-Douglas elasticities, ln TFP = lnY - Σβ lnX, national
-      mean by year.
-  (B) DEA TFP            -- output-oriented, NIRS (Σλ<=1), free-disposal inputs,
-      SEQUENTIAL (non-regressive) frontier = all obs up to year t.
-      Sequential Malmquist, cumulative.  The EFFCH/TECHCH split of the same
-      index is done in 23_dea_sfa_framework.do.
+  Output-oriented, NIRS (Σλ <= 1), free-disposal inputs, SEQUENTIAL
+  (non-regressive) frontier = all observations up to year t.  Sequential
+  Malmquist, cumulated to a level index (base year = 0 in logs).  The
+  EFFCH/TECHCH split of the same index is also written per county-year.
 
-Both indexed to base year = 0 (log). One overlay figure: fig_tfp_dea_vs_fe.png.
+The parametric counterpart is NOT computed here.  It is 21_sfa_bc92.do, which
+estimates the same technology by BC92 stochastic frontier under the SAME
+returns-to-scale assumption (NIRS) in both Cobb-Douglas and translog form; the
+two are brought together in 23_dea_sfa_framework.do.  Keeping the nonparametric
+and parametric estimates in separate scripts stops a fast reduced-form residual
+from being read as the parametric frontier.
+
+Outputs: src/clean/tfp_dea_nirs_4in.csv, src/clean/dea_malmquist_county.csv,
+         src/figures/fig_tfp_dea.png
 """
-import os, sys, time
+import os, sys, time, argparse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try: sys.stdout.reconfigure(encoding="utf-8")
 except Exception: pass
 import numpy as np, pandas as pd
 from scipy.optimize import linprog
-from linearmodels.panel import PanelOLS
 import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
 import _common as C
 
+TAG = {"v": ""}
 OUT = "real_gvp"
 INP = ["Laborday_impute", "Land_serv_q", "capital_serv_q", "Inter_all_real"]
 EPS = 1e-9
 
-# ----------------------------------------------------------------- (A) FE Solow
-def fe_solow(d):
-    df = d.copy()
-    df["lY"] = np.log(df[OUT])
-    for v in INP:
-        df["l_" + v] = np.log(df[v])
-    df = df.set_index(["countyid", "year"])
-    X = df[["l_" + v for v in INP]]
-    res = PanelOLS(df["lY"], X, entity_effects=True, time_effects=True).fit()
-    b = res.params
-    print("  FE elasticities:", {v: round(b["l_"+v], 3) for v in INP},
-          "RTS=%.3f" % sum(b["l_"+v] for v in INP))
-    resid = df["lY"] - sum(b["l_"+v] * df["l_"+v] for v in INP)
-    tfp = resid.groupby("year").mean()
-    tfp = tfp - tfp.iloc[0]
-    return pd.DataFrame({"year": tfp.index, "lntfp": tfp.values}), b
-
-# ----------------------------------------------------------------- (B) DEA NIRS
+# ----------------------------------------------------------------- DEA NIRS
 def nondominated(X, Y):
     n = len(Y); keep = np.ones(n, bool)
     for i in np.argsort(-Y):
@@ -122,39 +111,59 @@ def dea_sequential(d):
         lvl.append(lvl[-1] + growth[b])
     county = pd.DataFrame(cyrows, columns=["year", "countyid", "lnM", "lnEC", "lnTC",
                                            "eff_prev", "eff_now"])
-    county.to_csv(os.path.join(C.CLEAN_DIR, "dea_malmquist_county.csv"), index=False)
+    county.to_csv(os.path.join(C.CLEAN_DIR, TAG["v"] + "dea_malmquist_county.csv"),
+                  index=False)
     return pd.DataFrame({"year": yrs, "lntfp": lvl})
 
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--from-year", type=int, default=1985,
+                    help="capital_serv_q behaves differently before 1985 and "
+                         "county coverage nearly doubles at it -- see "
+                         "52_frontier_figs.py")
+    ap.add_argument("--exclude-counties", default=None,
+                    help="CSV with a countyid column; dropped from the SAMPLE, "
+                         "hence from the sequential DEA reference set, so they "
+                         "can no longer define any year's frontier")
+    ap.add_argument("--tag", default="", help="suffix for the output filenames")
+    a = ap.parse_args()
+
     # the cleaned panel holds ALL resolved rural counties (reusable product);
     # the frontier is estimated on the cropland>=15% agricultural subset only
     panel = pd.read_csv(C.CLEAN_PANEL)
     n_all = panel.countyid.nunique()
     panel = panel[panel["ag_county"] == 1]
+    panel = panel[panel.year >= a.from_year]
+    if a.exclude_counties:
+        ex = pd.read_csv(a.exclude_counties)
+        ex = set(pd.to_numeric(ex["countyid"], errors="coerce").dropna().astype(int))
+        nb = panel.countyid.nunique()
+        panel = panel[~panel.countyid.isin(ex)]
+        print(f"excluded {len(ex)} counties: {nb:,d} -> "
+              f"{panel.countyid.nunique():,d} counties")
     d = panel.dropna(subset=[OUT] + INP).copy()
     d = d[(d[OUT] > 0) & (d[INP] > 0).all(axis=1)]
     print(f"sample: {d.countyid.nunique():,d} agricultural counties "
           f"(of {n_all:,d} in the cleaned panel), {len(d):,d} county-years")
-    print("FE Solow residual (4 inputs):")
-    fe, beta = fe_solow(d)
+    TAG["v"] = a.tag.lstrip("_") + "_" if a.tag else ""
     print("DEA sequential NIRS (4 inputs):")
     dea = dea_sequential(d)
-    fe.to_csv(os.path.join(C.CLEAN_DIR, "tfp_fe_solow_4in.csv"), index=False)
-    dea.to_csv(os.path.join(C.CLEAN_DIR, "tfp_dea_nirs_4in.csv"), index=False)
+    dea.to_csv(os.path.join(C.CLEAN_DIR, f"tfp_dea_nirs_4in{a.tag}.csv"), index=False)
 
     fig, ax = plt.subplots(figsize=(10, 5.2))
-    for df, lab, col in [(fe, "FE Solow residual", "#2ca02c"), (dea, "DEA NIRS sequential", "#1f77b4")]:
-        g = 100 * df["lntfp"].iloc[-1] / (df.year.iloc[-1] - df.year.iloc[0])
-        ax.plot(df.year, 100 * df["lntfp"], "-o", ms=4, color=col, label=f"{lab} ({g:.2f}%/yr)")
+    g = 100 * dea["lntfp"].iloc[-1] / (dea.year.iloc[-1] - dea.year.iloc[0])
+    ax.plot(dea.year, 100 * dea["lntfp"], "-o", ms=4, color="#1f77b4",
+            label=f"DEA NIRS sequential ({g:.2f}%/yr)")
     ax.axhline(0, color="k", lw=.6, ls=":")
-    for yr in (1, 3): ax.plot(fe.year, 100*np.log(1+yr/100.0)*(fe.year-fe.year.iloc[0]),
-                              "--", color="0.6", lw=1, label=f"lit. ref {yr}%/yr")
-    ax.set_title("China agricultural TFP by year: DEA (NIRS, sequential) vs FE Solow residual\n"
+    for yr in (1, 3):
+        ax.plot(dea.year, 100*np.log(1+yr/100.0)*(dea.year-dea.year.iloc[0]),
+                "--", color="0.6", lw=1, label=f"lit. ref {yr}%/yr")
+    ax.set_title("China agricultural TFP by year: DEA (NIRS, sequential)\n"
                  "cleaned panel, all 4 inputs (L, Land, K, M), single output")
     ax.set_ylabel("ln TFP x 100 (~ % vs base)"); ax.set_xlabel("year")
     ax.legend(fontsize=8); ax.grid(alpha=.3)
     fig.tight_layout()
-    p = os.path.join(C.FIG_DIR, "fig_tfp_dea_vs_fe.png")
+    p = os.path.join(C.FIG_DIR, f"fig_tfp_dea{a.tag}.png")
     fig.savefig(p, dpi=200); plt.close(fig)
     print("saved:", p)
 

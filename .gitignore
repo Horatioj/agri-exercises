@@ -42,3 +42,4 @@ __pycache__/
 .Ruserdata
 *.stswp
 .DS_Store
+*.zip

@@ -1,75 +1,65 @@
 *===============================================================
 * 21_sfa_bc92.do
-* LAND-NORMALIZED (CRS) Battese-Coelli (1992) time-decay stochastic frontier on
-* the cleaned county panel, then Chen-style TFP -- ONE file for every sample and
-* distribution the analysis uses.  The four earlier do-files (11 / 16 / 17 / 28)
-* were the same specification run on different samples and differed only in
-* which CSV they wrote, so they are folded into the arguments below.
+* Battese-Coelli (1992) time-decay stochastic frontier, COBB-DOUGLAS, on the
+* full cleaned agricultural county panel (cropland>=15%, ~1,975 counties),
+* under the SAME returns-to-scale assumption the DEA side uses: NIRS
+* (non-increasing returns to scale, RTS <= 1) rather than unconditional CRS.
 *
-*   sfpanel ln_y_s ln_L_s ln_K_s ln_M_s ib2005.year,
-*           model(bc92) distribution(`DIST') vce(cluster countyid)
-*   ln_tfp_chen = (alpha + year effect) - u_hat
+* HOW NIRS IS IMPOSED (KKT logic -- NIRS is an inequality, not an equality)
+*   1. estimate UNRESTRICTED (variable returns to scale);
+*   2. RTS at the sample mean = sum of the four input coefficients (logs are
+*      mean-centred, so this is exact -- Cobb-Douglas RTS is one global
+*      number, unlike translog where it varies by observation);
+*   3. RTS <= 1 -> constraint is SLACK: the unrestricted fit IS the NIRS fit,
+*      nothing further to do;
+*   4. RTS >  1 -> constraint BINDS: re-estimate on the boundary RTS = 1
+*      (CRS) via land normalization -- sfpanel rejects constraints() together
+*      with vce(cluster), and clustered SEs on 1,975 counties matter more
+*      than writing the restriction out formally.
+*
+* CONFIRMED THIS RUN (2026-08-14 log): RTS = 0.4416, comfortably inside NIRS
+* -- the CRS branch never fires, so ln_tfp_chen below is the plain
+* unrestricted Cobb-Douglas frontier residual. Worth sanity-checking this
+* number against DEA's own county-level implied RTS distribution -- 0.44 is
+* a fairly strong DRS reading; could be real, could be the four (unnormalized,
+* merely centred) inputs absorbing each other's variation.
+*
+* TRANSLOG -- TRIED AND DROPPED (2026-08-14). A parallel translog spec (14
+* input terms: 4 squares + 6 cross-products) was estimated alongside this
+* one; its likelihood got stuck at -44403.019 for at least 12 straight
+* iterations, flagged "(not concave)" throughout and never clearing -- unlike
+* this Cobb-Douglas run, which cleared "not concave" at iteration 15 and
+* converged cleanly by 18. Removed rather than forced through more
+* iterations. The translog / point-varying-elasticity work continues
+* separately in 50b_io_surface_translog.py, outside the SFA/BC92 estimation.
 *
 * USAGE
-*   do src/21_sfa_bc92.do [SAMPLE] [DIST] [NFULLTRY]
-*     SAMPLE   full (default) = ALL ~1,800 agricultural counties
-*              sub1000 | <integer N>  = random N-county subsample of them
-*     DIST     tnormal (default) | hnormal
-*     NFULLTRY 1 = attempt BC92 on the full panel; 0 = go straight to sub1000
-*              (only consulted when SAMPLE == full).  Default 1.
+*   do src/21_sfa_bc92.do
 *
-*   do src/21_sfa_bc92.do full     tnormal      // headline spec (was 11 / 16)
-*   do src/21_sfa_bc92.do sub1000  tnormal      // converged spec (was 17)
-*   do src/21_sfa_bc92.do full     tnormal  0   // coefficients only (was 28)
-*
-* WHY THE SAMPLE ARGUMENT EXISTS -- measured on the OLD ~2,500-county panel,
-* N=2,502 / 80,626 obs, over three runs, ~8h total:
-*   - the likelihood climbs -226,057 -> -52,499.6 and is FLAT from iteration ~14
-*     (relative change 7e-7; 2e-8 by iteration 17)
-*   - but every step reports "backed up": a variance parameter sits on a
-*     boundary, so Stata's scaled-gradient rule never fires and it grinds to
-*     iterate() at ~10 min per iteration
-*   - and one attempt HUNG outright (0% CPU) at iteration 4, so the full-panel
-*     route is not reproducible.
-* The 1,000-county subsample converges cleanly in ~15 min.  The agricultural
-* filter cuts the full sample to ~1,800, which is between the two, so the full
-* run is attempted under ORDINARY convergence rules (no `nonrtolerance') and
-* should be given a wall-clock cap by the caller.  If it does not converge,
-* fall back to sub1000 -- the specification documented in METHODOLOGY.md 4.3.
+* CONVERGENCE NOTE -- measured on the OLD ~2,500-county panel (before the
+* agricultural filter existed), N=2,502/80,626 obs, ~8h across three runs:
+* likelihood climbed -226,057 -> -52,499.6, flat from iteration ~14, but kept
+* "backing up" (a variance parameter sat on a boundary) so the stopping rule
+* never fired; one attempt hung outright. On the current ~1,975-county
+* agricultural sample this Cobb-Douglas spec converged cleanly in 18
+* iterations, a few minutes -- kept here for reference in case a future,
+* slower cut of the sample reproduces the old symptom.
 *
 * OUTPUTS (src/clean/)
-*   sfa_bc92_county_year.csv      SAMPLE=full (all ag)  countyid year SID real_gvp
-*   sfa_sub1000_county_year.csv   SAMPLE=sub1000    ln_tfp_chen u_hat te_jlms
-*   sfa_surface_coefs.csv         always: eq, term, coef -- the frontier
-*                                 coefficients the 3-D surface figure
-*                                 (50_io_surface.py) draws
+*   sfa_bc92_county_year.csv  countyid year SID real_gvp ln_tfp_chen u_hat
+*                             te_jlms rts sfa_model_used
+*   sfa_surface_coefs.csv     eq term coef -- frontier coefficients for the
+*                             3-D surface figure (50_io_surface.py)
+*   sfa_nirs_summary.csv      one row: rts, nirs_binds, sigma_u2, converged,
+*                             model_used
 *===============================================================
 clear all
 set more off
 set matsize 800
-set seed 42
 
 local ROOT "E:/TFP_weather"
-local SAMPLE  "`1'"
-local DIST    "`2'"
-local FULLTRY "`3'"
-if "`SAMPLE'"  == "" local SAMPLE  "full"
-if "`DIST'"    == "" local DIST    "tnormal"
-if "`FULLTRY'" == "" local FULLTRY 1
 
-if "`SAMPLE'" == "full"    local NSUB 0
-else if "`SAMPLE'" == "sub1000" local NSUB 1000
-else                       local NSUB = real("`SAMPLE'")
-if `NSUB' == . {
-    di as err "SAMPLE must be full, sub1000 or an integer; got `SAMPLE'"
-    exit 198
-}
-
-if "`SAMPLE'" == "full"         local OUTCSV "sfa_bc92_county_year.csv"
-else if "`SAMPLE'" == "sub1000" local OUTCSV "sfa_sub1000_county_year.csv"
-else                            local OUTCSV "sfa_sub`NSUB'_county_year.csv"
-
-di _n "=== 21_sfa_bc92.do  SAMPLE=`SAMPLE'  DIST=`DIST'  FULLTRY=`FULLTRY' ==="
+di _n "=== 21_sfa_bc92.do  (BC92, Cobb-Douglas, NIRS) ==="
 
 *--------------------------------------------------*
 * Load + analysis sample
@@ -77,13 +67,31 @@ di _n "=== 21_sfa_bc92.do  SAMPLE=`SAMPLE'  DIST=`DIST'  FULLTRY=`FULLTRY' ==="
 import delimited "`ROOT'/src/clean/county_panel_clean.csv", clear varnames(1) case(preserve)
 destring countyid year SID ag_county real_gvp Laborday_impute Land_serv_q capital_serv_q Inter_all_real, replace force
 
+*--- YEAR RESTRICTION: 1985 onward -----------------------------------------*
+count
+local n0 = r(N)
+keep if year >= 1985
+di "year restriction: kept " _N " of `n0' obs (dropped " `n0' - _N ", years 1981-1984)"
+
 *--- AGRICULTURAL SAMPLE ---------------------------------------------------*
-* The cleaned panel holds ALL resolved rural county units so it can be reused;
-* every estimate here is on the cropland>=15% agricultural subset.
 qui levelsof countyid, local(_all)
 keep if ag_county == 1
 qui levelsof countyid, local(_ag)
 di "agricultural sample: " `: word count `_ag'' " of " `: word count `_all'' " counties"
+
+*--- exclude composition/leverage outliers identified in 59_/60_ audits ---*
+local excl_coastal  370634 330322 330921 371082 320981 350122   // island/coastal specialty ag
+local excl_district 110106 110114 310112 310118 321202 330104 330903 360104 370213 430111  // peri-urban districts
+local excl_ids `excl_coastal' `excl_district'   // TODO: append your remaining IDs here
+
+gen byte excl_frontier = 0
+foreach id of local excl_ids {
+    replace excl_frontier = 1 if countyid == `id'
+}
+count if excl_frontier
+
+drop if excl_frontier == 1
+drop excl_frontier
 
 *--- keep valid (all 5 strictly positive & non-missing) ---
 gen byte any_invalid = ///
@@ -96,124 +104,143 @@ tab any_invalid
 drop if any_invalid == 1
 drop any_invalid
 
-*--- optional random county subsample ---
-* Inner Mongolia (15), Tibet (54), Qinghai (63) and Xinjiang (65) are excluded:
-* huge pastoral units whose land service is not comparable, and which dominate
-* the frontier tail that stalls the optimizer.
-if `NSUB' > 0 {
-    drop if inlist(SID, 15, 54, 63, 65)
-    preserve
-        bysort countyid: keep if _n == 1
-        keep countyid
-        gen double u = runiform()
-        sort u
-        keep if _n <= `NSUB'
-        keep countyid
-        tempfile pick
-        save `pick', replace
-    restore
-    merge m:1 countyid using `pick', keep(match) nogen
-}
-
 xtset countyid year
 
-*--- land normalization (impose CRS): everything per unit land service ---
-gen double ln_S   = ln(Land_serv_q)
-gen double ln_y_s = ln(real_gvp)        - ln_S
-gen double ln_L_s = ln(Laborday_impute) - ln_S
-gen double ln_K_s = ln(capital_serv_q)  - ln_S
-gen double ln_M_s = ln(Inter_all_real)  - ln_S
-label var ln_y_s "ln real output per land service"
-label var ln_L_s "ln labor days per land service"
-label var ln_K_s "ln capital service per land service"
-label var ln_M_s "ln intermediate inputs per land service"
+*--------------------------------------------------*
+* Logs, mean-centred -- centring makes the first-order coefficients readable
+* directly as output elasticities AT the sample mean, so RTS_mean is simply
+* their sum. Pure reparameterisation: shifts only the constant, changes
+* nothing about the fit, residuals, or elasticities.
+*--------------------------------------------------*
+gen double ln_y = ln(real_gvp)
+gen double ln_L = ln(Laborday_impute)
+gen double ln_S = ln(Land_serv_q)
+gen double ln_K = ln(capital_serv_q)
+gen double ln_M = ln(Inter_all_real)
+
+foreach v in L S K M {
+    qui sum ln_`v', meanonly
+    gen double c`v' = ln_`v' - r(mean)
+    label var c`v' "ln input `v', centred at sample mean"
+}
+local CD "cL cS cK cM"
+
+* CRS (land-normalized) version, used ONLY if the NIRS constraint binds
+gen double n_y = ln_y - ln_S
+gen double nL  = cL - cS
+gen double nK  = cK - cS
+gen double nM  = cM - cS
+local CDn "nL nK nM"
 
 qui levelsof countyid, local(cc)
 di "N obs = " _N "   N counties = " `: word count `cc''
-sum ln_y_s ln_L_s ln_K_s ln_M_s ln_S
+sum ln_y cL cS cK cM
 
-*--------------------------------------------------*
-* Estimate
-*--------------------------------------------------*
+*===============================================================
+* Step 1: estimate UNRESTRICTED (variable returns to scale)
+*===============================================================
 timer clear 1
 timer on 1
-local ok 0
-if `NSUB' > 0 | `FULLTRY' {
-    if `NSUB' > 0 {
-        capture noisily sfpanel ln_y_s ln_L_s ln_K_s ln_M_s ib2005.year, ///
-            model(bc92) distribution(`DIST') difficult iterate(400) vce(cluster countyid)
-    }
-    else {
-        * full agricultural sample: ordinary convergence rules, visible log.
-        * Give this a wall-clock cap from outside -- see the header note.
-        capture noisily sfpanel ln_y_s ln_L_s ln_K_s ln_M_s ib2005.year, ///
-            model(bc92) distribution(`DIST') difficult iterate(100) ///
-            vce(cluster countyid)
-    }
-    local ok = (_rc == 0)
-    if `ok' local ok = (e(N) < .)
-    di "BC92 usable = `ok'   (rc=" _rc ", converged=" e(converged) ")"
-}
-else di "BC92 full-panel attempt skipped (FULLTRY=0)"
-
-if !`ok' {
-    di as err "BC92 unusable -> pooled frontier fallback"
-    * Pooled cross-sectional SFA with year dummies: robust, fast; same Chen
-    * construction (alpha + year effects - u_it), u_it varies by observation.
-    * NOTE: on the cleaned panel this collapses to sigma_u -> 0 (wrong skewness,
-    * METHODOLOGY.md 5.1), so its TFP path is neutral technical change only.
-    frontier ln_y_s ln_L_s ln_K_s ln_M_s ib2005.year, ///
-        distribution(hnormal) vce(cluster countyid)
-}
+capture noisily sfpanel ln_y `CD' ib2005.year, ///
+    model(bc92) distribution(tnormal) difficult iterate(400) vce(cluster countyid)
+local ok = (_rc == 0)
+if `ok' local ok = (e(N) < .)
+local conv = cond(`ok', e(converged), 0)
 timer off 1
 timer list 1
-estimates store SFA_USED
-gen byte sfa_sample = e(sample)
+di "unrestricted usable = `ok'  (rc=" _rc ", converged=`conv')"
+
+local model_used ""
+local rts = .
+local binds = 0
+
+if `ok' {
+    local rts = _b[cL] + _b[cS] + _b[cK] + _b[cM]
+    di _n "RTS at sample mean = " %6.4f `rts'
+    capture noisily test cL + cS + cK + cM = 1
+
+    if `rts' <= 1 {
+        di as txt "NIRS constraint is SLACK (RTS <= 1) -- unrestricted fit IS the NIRS fit."
+        local model_used "bc92_cd_nirs_slack"
+    }
+    else {
+        di as txt "NIRS constraint BINDS (RTS > 1) -> re-estimating on the boundary RTS = 1 (CRS, land-normalized)."
+        local binds = 1
+        capture noisily sfpanel n_y `CDn' ib2005.year, ///
+            model(bc92) distribution(tnormal) difficult iterate(400) vce(cluster countyid)
+        local ok = (_rc == 0)
+        if `ok' local ok = (e(N) < .)
+        local conv = cond(`ok', e(converged), 0)
+        local rts = 1
+        local model_used "bc92_cd_nirs_crs"
+    }
+}
+
+if !`ok' {
+    di as err "BC92 did not converge -> POOLED frontier fallback (WEAKER MODEL -- see header)."
+    frontier ln_y `CD' ib2005.year, distribution(hnormal) vce(cluster countyid)
+    local rts = _b[cL] + _b[cS] + _b[cK] + _b[cM]
+    local model_used "pooled_hnormal_fallback"
+    local conv = 0
+}
+
+di "model used: `model_used'"
 matrix list e(b)
 
 *--------------------------------------------------*
 * Predict frontier, inefficiency, efficiency
 *--------------------------------------------------*
-* xb and u (E[u|e]) are supported by BOTH sfpanel and frontier; te via exp(-u)
-predict double xb_s   if sfa_sample, xb
-predict double u_hat  if sfa_sample, u
+gen byte sfa_sample = e(sample)
+predict double xb_s  if sfa_sample, xb
+predict double u_hat if sfa_sample, u
 gen double te_jlms = exp(-u_hat) if sfa_sample
 
-* frontier = alpha + year effects  (strip the input contribution)
-gen double input_part_s = ///
-    _b[ln_L_s]*ln_L_s + _b[ln_K_s]*ln_K_s + _b[ln_M_s]*ln_M_s if sfa_sample
-gen double ln_frontier = xb_s - input_part_s if sfa_sample
-label var ln_frontier "Frontier technology term: alpha + year effects"
+* frontier = constant + year effects, stripped of every INPUT term. Built
+* from the actual regressor list so slack vs binds needs no special-casing --
+* EXCEPT that the binds branch regressed ln(y/S), so its ln_frontier is still
+* in per-land-unit terms and must be shifted by +ln_S to land back on the
+* same output-space scale as the slack branch and as DEA/FE downstream.
+* (This +ln_S step was MISSING in the previous version -- see review notes.)
+gen double input_part = 0 if sfa_sample
+local USED = cond(`binds', "`CDn'", "`CD'")
+foreach t of local USED {
+    qui replace input_part = input_part + _b[`t']*`t' if sfa_sample
+}
+gen double ln_frontier = xb_s - input_part if sfa_sample
+if `binds' {
+    qui replace ln_frontier = ln_frontier + ln_S if sfa_sample
+}
+label var ln_frontier "Frontier technology term: constant + year effects, output scale"
 
-* check the frontier only varies by year (should be ~0 within-year sd)
+* sanity: the frontier must vary by YEAR ONLY (within-year sd ~ 0)
 bys year: egen double sd_frontier = sd(ln_frontier) if sfa_sample
 sum sd_frontier if sfa_sample
 drop sd_frontier
 
-*--------------------------------------------------*
-* Chen-style SFA-TFP
-*--------------------------------------------------*
+*--- Chen-style SFA-TFP ---
 gen double ln_tfp_chen = ln_frontier - u_hat if sfa_sample
-label var ln_tfp_chen "Log SFA-TFP, Chen-style (alpha + year effect - u)"
-* did inefficiency actually vary?  (the wrong-skewness check)
+label var ln_tfp_chen "Log SFA-TFP, Chen-style (constant + year effect - u), output scale"
 sum ln_tfp_chen u_hat te_jlms, detail
 
-*--- export county-year for the Python aggregation (simple + weighted) ---
+*--- variance parameters (e()-names differ between sfpanel and frontier) ---
+local su2 = .
+capture local su2 = e(sigma_u2)
+if missing(`su2') capture local su2 = e(sigma_u)^2
+
+*--- export county-year ---
+gen str24 sfa_model_used = "`model_used'"
+gen double rts = `rts'
+label var sfa_model_used "bc92_cd_nirs_* = real BC92; pooled_hnormal_fallback = degraded fallback"
 preserve
 keep if sfa_sample
-keep countyid year SID real_gvp ln_tfp_chen u_hat te_jlms
-order countyid year SID real_gvp ln_tfp_chen u_hat te_jlms
-export delimited "`ROOT'/src/clean/`OUTCSV'", replace
+keep countyid year SID real_gvp ln_tfp_chen u_hat te_jlms rts sfa_model_used
+order countyid year SID real_gvp ln_tfp_chen u_hat te_jlms rts sfa_model_used
+export delimited "`ROOT'/src/clean/sfa_bc92_county_year.csv", replace
 restore
 
 *--------------------------------------------------*
 * Export frontier coefficients (constant, inputs, year effects)
 *--------------------------------------------------*
-* Converting back to levels, the frontier is
-*   ln y = alpha + lambda_t + bL*lnL + bK*lnK + bM*lnM + (1-bL-bK-bM)*lnLand
-* so the implied land elasticity is 1-bL-bK-bM and the surface is concave in
-* (L,M) whenever bL+bM < 1.  e(b) carries several "_cons" (frontier AND variance
-* equations), so the equation name must be exported alongside the term.
 matrix b = e(b)
 local nb = colsof(b)
 local names : colnames b
@@ -232,6 +259,20 @@ export delimited using "`ROOT'/src/clean/sfa_surface_coefs.csv", replace
 restore
 erase "`ROOT'/src/clean/_sfa_coef_tmp.dta"
 
-di _n "sigma_u2 = " e(sigma_u2) "   sigma_v2 = " e(sigma_v2)
+*--------------------------------------------------*
+* One-row NIRS / convergence summary
+*--------------------------------------------------*
+preserve
+clear
+set obs 1
+gen double rts = `rts'
+gen byte nirs_binds = `binds'
+gen double sigma_u2 = `su2'
+gen byte converged = `conv'
+gen str24 model_used = "`model_used'"
+export delimited using "`ROOT'/src/clean/sfa_nirs_summary.csv", replace
+restore
+
+di _n "sigma_u2 = `su2'"
 di "N used   = " e(N)
-di _n "DONE 21_sfa_bc92.do  (SAMPLE=`SAMPLE', DIST=`DIST') -> src/clean/`OUTCSV'"
+di _n "DONE 21_sfa_bc92.do  (model_used=`model_used', rts=" %6.4f `rts' ") -> src/clean/sfa_bc92_county_year.csv"

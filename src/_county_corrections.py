@@ -60,9 +60,17 @@ NAME_FIX = {341281: "亳县", 460028:"临高县"}          # 毫县 -> 亳县
 
 HAINAN_SID, HAINAN_FROM = 46, 1988
 
-# canonical codes that must SURVIVE the urban-district (区) name filter, because
-# they are农业 counties that were撤县设区 (kept per the user's instruction).
-CANON_KEEP = {canon for canon, _, _ in RENAME_COMBINE}
+# NOTE, kept because the fact still matters even though the code is gone.
+# There used to be a CANON_KEEP set here -- the RENAME_COMBINE canonical codes,
+# exempted from a name-based urban-district (区) filter.  Both it and that filter
+# have been deleted: the filter was never called, so CANON_KEEP protected nothing,
+# and the ONE agricultural-county definition in this project is the cropland test
+# in 02_apply_resolution.py (cropland >= 15% in any year 1986-2015 -> ag_county).
+#
+# What the set encoded is still true and would matter if a 区-name rule were ever
+# reintroduced: 5 of the 18 canonical codes are 区-named because the county was
+# 撤县设区 during the panel -- 140902 忻府区, 330109 萧山区, 330803 衢江区,
+# 612503 华州区, 650109 米东区.  A name-based rule would silently drop all five.
 
 # old member code -> canonical (new) code, so the cropland ag-county list (which
 # uses 2010 codes) can be mapped into the same canonical space as the panel.

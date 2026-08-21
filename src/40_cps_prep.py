@@ -11,14 +11,6 @@ INPUT INDEX
         ln x = SUM_k beta_k ln X_k ,  SUM_k beta_k = 1
   i.e. a CRS geometric (Cobb-Douglas) aggregator.
 
-  *** PLACEHOLDER WEIGHTS -- TOP-PRIORITY FOLLOW-UP ***
-  beta comes from the BC92 SFA converged on the ~2,600-county sample, NOT on
-  this 1,800-county agricultural filter.  "Agricultural county" is a targeted
-  selection on economic structure, so the labour/land/capital/intermediate mix
-  plausibly differs systematically from the broader sample.  These weights are
-  therefore a REAL placeholder, not a formality: re-estimating the frontier /
-  cost shares on the 1,800-county sample is the next task after this pass.
-
 OUTPUT
   src/clean/cps/cps_frame.csv   countyid, year, y, x, w1(GDD), w2(rzsm 0-28cm)
 """

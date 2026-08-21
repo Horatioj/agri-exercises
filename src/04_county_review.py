@@ -51,6 +51,10 @@ if OVERWRITE:
 
 m    = pd.read_csv(C.CLEAN_PANEL)
 alog = pd.read_csv(C.ANOMALY_LOG) if os.path.exists(C.ANOMALY_LOG) else pd.DataFrame()
+# boundary-run splices (4c): value kept but LEVEL-shifted onto the core, so it is
+# neither "raw" nor "imputed" and needs its own marker.
+_rsc_f = os.path.join(C.DQ_DIR, "boundary_run_rescale.csv")
+rlog = pd.read_csv(_rsc_f) if os.path.exists(_rsc_f) else pd.DataFrame()
 NCOL = 8
 
 # Provincial MEDIAN ln-trend per variable (robust reference). Overlaid on every
@@ -120,6 +124,16 @@ def render(sid, var):
         if imp_mask.any():
             ax.plot(g.year.to_numpy()[imp_mask], lnC.to_numpy()[imp_mask],
                     "o", color="red", ms=3.6, zorder=4)
+        # boundary-run splices -> blue square on the RESCALED (cleaned) value, with the
+        # grey raw point showing the pre-splice level directly below/above it.
+        if len(rlog):
+            rr = rlog[(rlog.countyid == cid) & (rlog["var"] == var)]
+            if len(rr):
+                yrs = set(rr.year.tolist())
+                msk = g.year.isin(yrs).to_numpy()
+                if msk.any():
+                    ax.plot(g.year.to_numpy()[msk], lnC.to_numpy()[msk], "s",
+                            color="#1f77b4", ms=3.6, zorder=5)
         # held spikes (detected but kept, e.g. caliber break / unanchored) -> orange x
         if len(al):
             held = al[(al.countyid == cid) & (al["action"] == "hold")]
@@ -135,9 +149,11 @@ def render(sid, var):
 
     nimp  = int(dp[var + "_imp"].sum())
     nheld = int((al["action"] == "hold").sum()) if len(al) else 0
+    nrsc = int(((rlog.SID == sid) & (rlog["var"] == var)).sum()) if len(rlog) else 0
     fig.suptitle(f"{sid} {name}  —  {C.VLAB[var]}  (ln scale, {len(cids)} counties)\n"
-                 f"grey = original (raw), green = cleaned, purple dash = provincial median;  "
-                 f"red ● = imputed ({nimp}), orange x = held spike ({nheld})",
+                 f"grey = original (raw), green = cleaned;  purple dash = provincial median "
+                 f"red ● = imputed ({nimp}), blue ■ = boundary-run rescaled ({nrsc}), "
+                 f"orange x = held spike ({nheld})",
                  fontsize=11, y=1 - 0.34/figh)
     # manual layout; fixed ~0.95in band for the title + roomy hspace so per-panel
     # titles don't collide, and small provinces (Tianjin/Shanghai/Ningxia) fit fully.

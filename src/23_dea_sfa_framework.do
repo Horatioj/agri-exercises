@@ -13,7 +13,11 @@
 *
 * Inputs : src/clean/dea_malmquist_county.csv (lnM lnEC lnTC eff_prev eff_now)
 *          src/clean/county_panel_clean.csv    (real_gvp for weights)
-*          src/clean/sfa_sub1000_county_year.csv (converged BC92 SFA), optional
+*          src/clean/sfa_bc92_county_year.csv  (full-sample BC92 SFA), optional
+*          -- same ~1,975-county agricultural sample DEA is estimated on, so
+*          section E below compares the two on a matched (not a random-
+*          subsample) population. `sfa_model_used` in that file is checked
+*          and flagged if 21_sfa_bc92.do fell back off BC92.
 * Outputs: src/clean/dea_decomp_byyear.csv  dea_decomp_bystage.csv
 *          src/clean/framework_compare.csv
 *===============================================================
@@ -166,12 +170,20 @@ estimates store STAGE_TC
 *--------------------------------------------------*
 * E. DEA vs SFA comparison (complementarity)
 *--------------------------------------------------*
-capture confirm file "`ROOT'/src/clean/sfa_sub1000_county_year.csv"
+capture confirm file "`ROOT'/src/clean/sfa_bc92_county_year.csv"
 if _rc == 0 {
-    di _n "=== E. DEA vs SFA on the SAME (1000-county) sample ==="
+    di _n "=== E. DEA vs SFA on the SAME (full agricultural) sample ==="
     preserve
-    import delimited "`ROOT'/src/clean/sfa_sub1000_county_year.csv", clear varnames(1) case(preserve)
+    import delimited "`ROOT'/src/clean/sfa_bc92_county_year.csv", clear varnames(1) case(preserve)
     destring countyid year ln_tfp_chen u_hat, replace force
+    * refuse to silently compare DEA against a degraded (non-BC92) SFA run --
+    * substring match, not exact, so it survives model_used naming changes
+    * (bc92_cd_nirs_slack / bc92_cd_nirs_crs / any future spec suffix)
+    capture confirm string variable sfa_model_used
+    if _rc == 0 {
+        qui count if strpos(sfa_model_used, "pooled_hnormal_fallback") > 0
+        if r(N) > 0 di as err "WARNING: sfa_bc92_county_year.csv was produced by the POOLED FALLBACK model, not BC92 -- this table compares DEA against a weaker SFA spec (no county persistence, prior sigma_u->0 risk). Re-run 21_sfa_bc92.do until BC92 converges before trusting the gap column."
+    }
     xtset countyid year
     gen double dln_sfa = ln_tfp_chen - L.ln_tfp_chen
     keep countyid year dln_sfa

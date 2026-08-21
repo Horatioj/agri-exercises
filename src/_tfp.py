@@ -37,12 +37,67 @@ import _common as C
 # The older sets are kept for reproducing earlier tables and for the subsample
 # robustness check, not because anything should prefer them.
 # ---------------------------------------------------------------------------
-BETA_AG = {"Laborday_impute": 0.4094, "Land_serv_q": 0.0697,
-           "capital_serv_q": 0.0544, "Inter_all_real": 0.4666}
+BETA_HARDCODED = {"Laborday_impute": 0.4094, "Land_serv_q": 0.0697,
+                  "capital_serv_q": 0.0544, "Inter_all_real": 0.4666}
 BETA_SUB1000 = {"Laborday_impute": 0.448, "Land_serv_q": 0.081,
                 "capital_serv_q": 0.038, "Inter_all_real": 0.433}
 BETA_OLD2600 = {"Laborday_impute": 0.470, "Land_serv_q": 0.015,
                 "capital_serv_q": 0.070, "Inter_all_real": 0.446}
+
+# Term names 21_sfa_bc92.do writes into sfa_surface_coefs.csv, per branch.
+_SFA_TERMS = {"cL": "Laborday_impute", "cS": "Land_serv_q",
+              "cK": "capital_serv_q", "cM": "Inter_all_real",
+              "nL": "Laborday_impute", "nK": "capital_serv_q",
+              "nM": "Inter_all_real"}
+
+
+def load_sfa_beta(path=None, quiet=False):
+    """Read the input elasticities from the LIVE SFA output if it is there.
+
+    The hardcoded set above came from the land-NORMALISED specification, where
+    land was never estimated: the frontier regressed ln(y/S) on ln(L/S), ln(K/S),
+    ln(M/S), so beta_land was recovered as the residual 1 - bL - bK - bM and
+    inherited every one of the other three's errors.  The current do-file
+    estimates land DIRECTLY as its own regressor (`cS`), so its elasticity is a
+    coefficient with a standard error rather than a leftover.  Reading the CSV
+    means a re-run of the SFA updates every figure and every Tornqvist weight
+    without anyone editing a literal here and hoping the two stay in step.
+
+    If the do-file took its CRS branch it regressed the normalised variables, so
+    only nL/nK/nM are present and land is again the 1 - sum residual -- that case
+    is detected and reported rather than silently producing a land weight of 0.
+    """
+    path = path or os.path.join(C.CLEAN_DIR, "sfa_surface_coefs.csv")
+    if not os.path.exists(path):
+        if not quiet:
+            print(f"[_tfp] {os.path.basename(path)} not found -- using the hardcoded "
+                  "BETA (land = 1 - bL - bK - bM residual from the CRS spec)")
+        return dict(BETA_HARDCODED), "hardcoded"
+    t = pd.read_csv(path)
+    t = t[t["eq"].astype(str).str.lower().str.startswith("frontier")]
+    b = {}
+    for term, coef in zip(t["term"].astype(str), t["coef"]):
+        if term in _SFA_TERMS:
+            b[_SFA_TERMS[term]] = float(coef)
+    if not b:
+        if not quiet:
+            print(f"[_tfp] no frontier input terms in {os.path.basename(path)} "
+                  "-- using the hardcoded BETA")
+        return dict(BETA_HARDCODED), "hardcoded"
+    src = "sfa_estimated"
+    if "Land_serv_q" not in b:                 # CRS branch: land is the residual
+        b["Land_serv_q"] = 1.0 - sum(b.values())
+        src = "sfa_crs_land_residual"
+        if not quiet:
+            print("[_tfp] SFA took its CRS branch: land is again the 1 - sum residual")
+    if not quiet:
+        print(f"[_tfp] BETA from {os.path.basename(path)} ({src}): "
+              + ", ".join(f"{k.split('_')[0]}={v:.4f}" for k, v in b.items())
+              + f"   RTS={sum(b.values()):.4f}")
+    return b, src
+
+
+BETA_AG, BETA_SOURCE = load_sfa_beta(quiet=True)
 BETA_FULL = BETA_AG            # back-compatible alias; prefer BETA_AG
 
 # The five reform stages (Lin 1992; Huang & Rozelle; Gong 2018).  Data start in

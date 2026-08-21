@@ -2,7 +2,7 @@
 """
 PARAMETRIC counterpart to the non-parametric Fig 9 / Fig 10 in 52_ and 53_.
 
-Same object, two estimators.  53_frontier_isoquant_expansion.py builds the
+Same object, two estimators.  52_frontier_figs.py builds the
 best-practice boundary NON-PARAMETRICALLY (an order-alpha quantile envelope of
 the observed cloud, no functional form).  This script imposes a FUNCTIONAL FORM
 and draws the fitted surface.  Agreement between them is the check: a smooth

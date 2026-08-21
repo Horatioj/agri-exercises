@@ -24,7 +24,17 @@ PRICE_DTA  = os.path.join(DATA, "priceindex_province.dta")
 # the panel and had urbanised by 2010, conditioning the sample on the very
 # transition the paper studies.  Set AG_LIST back to that file to reproduce
 # the old sample.
-AG_LIST    = os.path.join(DATA, "ag_county", "ag_counties_union_aglist.csv")
+# STRICT: cropland >= 15% in EVERY raster year (1986-2015), not merely in one.
+# The UNION rule admitted 2,149 counties, the strict rule 1,855 -- it removes 294,
+# of which 120 are urban districts.  The union was chosen to avoid conditioning
+# the sample on a single cross-section, but it has no guard against a county that
+# crossed the line briefly: 29 of the counties it admitted cleared 15% in only
+# 1-5 of the 30 years and were then carried for all 36 panel years.  Requiring
+# every year removes those and most of the peri-urban districts with them.
+# NOTE it is STRICTLY stronger than "last_above >= 2015" (1,954 counties): 99
+# counties are still above at the end but dipped below in between.
+AG_LIST    = os.path.join(DATA, "ag_county", "ag_counties_strict_aglist.csv")
+AG_LIST_UNION = os.path.join(DATA, "ag_county", "ag_counties_union_aglist.csv")
 AG_LIST_2010 = os.path.join(DATA, "ag_county", "ag_counties_crop15.csv")  # superseded
 BASE_DTA   = os.path.join(DATA, "base_panel.dta")     # assembled by 00_build_base_panel.do
 IO_RAW     = os.path.join(DATA, "io_raw_corrected.dta")  # corrected raw I-O (00e), input to 01
@@ -56,14 +66,29 @@ VLAB = {
 PPI_COL = "PPI_CCD_2005"
 
 # ----------------------------------------------------------------------------
-# Geography filter: keep agricultural rural counties, drop urban districts and
-# prefecture/municipality aggregate rows.
+# County-type LABELS.  These are DESCRIPTIVE, not a filter.
+#
+# There is exactly ONE agricultural-county definition in this project: the
+# cropland test in 02_apply_resolution.py (cropland >= 15% in any year 1986-2015),
+# written onto the panel as the `ag_county` flag.  A name-based
+# `apply_geography_filter` used to live here as a second, parallel rule that
+# dropped 区/辖/郊 names and countyid%100==0 aggregate rows; it was never called
+# by any script, so it was deleted rather than left looking authoritative.
+#
+# The label below is kept because the composition it measures is worth reporting:
+# 616 of the 1,975 agricultural counties (31.2%) have 区 names.  They are NOT a
+# filter failure -- they pass the cropland test on their own merits, being
+# peri-urban districts that really do farm -- but they are atypical enough that
+# 59_frontier_audit.py quantifies how far they move each frontier (~3% at the
+# aggregate, ~19% on the K/L partial view).  Use it to SPLIT a sample for a
+# robustness check, never to define one.
 # ----------------------------------------------------------------------------
 DISTRICT_SUFFIXES = ("区", "辖", "郊")   # 市辖区 / "XX市辖" aggregates / 郊区 suburbs
 
 
 def is_urban_district(name):
-    """True for urban municipal districts that should be excluded."""
+    """True if the county NAME is that of an urban district.  Descriptive label
+    only -- see the note above; this does not decide sample membership."""
     if not isinstance(name, str):
         return False
     return name.endswith(DISTRICT_SUFFIXES)
@@ -72,25 +97,6 @@ def is_urban_district(name):
 def is_aggregate_row(countyid):
     """countyid ending in 00 = prefecture / municipality total, not a real county unit."""
     return int(countyid) % 100 == 0
-
-
-def apply_geography_filter(df, keep_codes=None):
-    """Return (kept_df, dropped_df) after removing urban districts + aggregate rows.
-
-    keep_codes: countyids exempt from the district/aggregate drop (e.g. 撤县设区
-    agricultural counties harmonised in _county_corrections.CANON_KEEP).
-    """
-    keep_codes = set(keep_codes or ())
-    d = df.copy()
-    d["_district"] = d["county_name"].map(is_urban_district)
-    d["_aggregate"] = d["countyid"].map(is_aggregate_row)
-    drop_mask = (d["_district"] | d["_aggregate"]) & ~d["countyid"].isin(keep_codes)
-    kept = d[~drop_mask].drop(columns=["_district", "_aggregate"]).copy()
-    dropped = d[drop_mask].copy()
-    dropped["drop_reason"] = np.where(dropped["_aggregate"], "aggregate_row",
-                                      "urban_district")
-    dropped = dropped.drop(columns=["_district", "_aggregate"])
-    return kept, dropped
 
 
 # ----------------------------------------------------------------------------

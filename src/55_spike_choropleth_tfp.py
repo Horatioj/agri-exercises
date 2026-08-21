@@ -40,7 +40,7 @@ DESIGN NOTES (why it looks the way it does)
 Statistics are derived here from the per-county series rather than read from a
 pre-baked table, so this script depends only on the pipeline outputs below.
 
-Inputs : src/clean/dea_malmquist_county.csv   (20_dea_vs_fe_tfp.py)   --source dea
+Inputs : src/clean/dea_malmquist_county.csv   (20_dea_tfp.py)   --source dea
          src/clean/sfa_bc92_county_year.csv   (21_sfa_bc92.do)        --source sfa
          src/clean/county_panel_clean.csv     (03_clean_panel.py)
 Output : src/figures/fig_spike_choropleth_tfp[_sfa].png
@@ -68,7 +68,7 @@ ALBERS = ("+proj=aea +lat_1=25 +lat_2=47 +lat_0=0 +lon_0=105 "
           "+x_0=0 +y_0=0 +ellps=krass +units=m +no_defs")
 
 # --- marks -----------------------------------------------------------------
-BASE_W_KM = 6.0        # hairline: 1,975 spikes must not become a black mass
+BASE_W_KM = 8.0        # hairline: 1,975 spikes must not become a black mass
 MAX_H_KM = 260.0       # shorter than the old 430 so spikes stay inside the map
 SPIKE_INK = "#22303f"  # one neutral ink, legible over both ramps
 SPIKE_ALPHA = 0.62
@@ -85,7 +85,7 @@ def county_stats(source):
     if source == "dea":
         p = os.path.join(C.CLEAN_DIR, "dea_malmquist_county.csv")
         if not os.path.exists(p):
-            sys.exit("dea_malmquist_county.csv missing — run 20_dea_vs_fe_tfp.py")
+            sys.exit("dea_malmquist_county.csv missing — run 20_dea_tfp.py")
         d = pd.read_csv(p).rename(columns={"lnM": "dln"})[["countyid", "year", "dln"]]
         lab = "DEA sequential-NIRS Malmquist"
     else:
@@ -211,8 +211,8 @@ def main():
         handles.append(Patch(facecolor=NODATA, edgecolor="white", linewidth=.6,
                              label="no data"))
         leg = ax.legend(handles=handles, loc="lower left", frameon=True,
-                        framealpha=.94, edgecolor="#d8d6d1", fontsize=8.6,
-                        title=f"equal-count classes  ({unit})", title_fontsize=9,
+                        framealpha=.94, edgecolor="#d8d6d1", fontsize=10,
+                        # title=f"equal-count classes  ({unit})", title_fontsize=9,
                         borderpad=.7, labelspacing=.42,
                         bbox_to_anchor=(0.005, 0.005))
         leg.get_title().set_color(INK2)
@@ -225,33 +225,33 @@ def main():
     # collided with the coastline or sat on a white plate covering real
     # counties (Xinjiang, in the north-west corner).  A key must never hide
     # the data it explains.
-    kax = fig.add_axes([0.425, 0.020, 0.155, 0.135])
+    kax = fig.add_axes([0.005, 0.8, 0.13, 0.13])
     kax.set_axis_off()
     kax.set_xlim(0, 1); kax.set_ylim(0, 1)
     kax.add_patch(plt.Rectangle((0, 0), 1, 1, transform=kax.transAxes,
                                 facecolor="white", edgecolor="#d8d6d1",
                                 linewidth=.6, zorder=0))
-    kax.text(0.06, 0.92, "spike height", fontsize=8.8, color=INK,
-             fontweight="bold", va="top")
+    # kax.text(0.06, 0.92, "spike height", fontsize=10, color=INK,
+    #          fontweight="bold", va="top")
     kax.text(0.06, 0.74, "mean real agricultural GVP\n1981-2016, 2005 prices",
-             fontsize=7.9, color=INK2, va="top", linespacing=1.35)
+             fontsize=10, color=INK2, va="top", linespacing=1.35)
     bx = 0.14
     for frac in (1.0, 0.5, 0.25):
         hh = 0.30 * frac
-        kax.add_patch(plt.Polygon([[bx - 0.022, 0.06], [bx, 0.06 + hh],
-                                   [bx + 0.022, 0.06]],
+        kax.add_patch(plt.Polygon([[bx - 0.028, 0.06], [bx, 0.06 + hh],
+                                   [bx + 0.028, 0.06]],
                                   facecolor=SPIKE_INK, edgecolor="none",
                                   alpha=SPIKE_ALPHA, zorder=2))
         kax.text(bx + 0.045, 0.06 + hh, "{:,.0f} bn".format(frac * ref / 1e4),
                  fontsize=7.9, va="center", color=INK2)
         bx += 0.30
 
-    fig.suptitle("China county agriculture: productivity in colour, output in height",
-                 fontsize=15.5, fontweight="bold", color=INK, y=0.975)
-    fig.text(0.5, 0.937,
-             f"choropleth = {method};  spike = mean real agricultural GVP   |   "
-             f"{len(tfp):,d} agricultural counties, 1981–2016",
-             ha="center", fontsize=10.5, color=INK2)
+    # fig.suptitle("China county agriculture: productivity in colour, output in height",
+    #              fontsize=15.5, fontweight="bold", color=INK, y=0.975)
+    # fig.text(0.5, 0.937,
+    #          f"choropleth = {method};  spike = mean real agricultural GVP   |   "
+    #          f"{len(tfp):,d} agricultural counties, 1981–2016",
+    #          ha="center", fontsize=10.5, color=INK2)
     fig.tight_layout(rect=(0, 0.16, 1, 0.925))
     p = os.path.join(C.FIG_DIR, f"fig_spike_choropleth_tfp{suffix}.png")
     fig.savefig(p, dpi=180, bbox_inches="tight", facecolor="white")

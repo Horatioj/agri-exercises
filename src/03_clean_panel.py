@@ -61,19 +61,22 @@ C.ensure_dirs()
 # is almost always a data error -> stricter 3x; a DOWNWARD spike (drop then recover)
 # can be a real bad-harvest/weather year
 # Detector thresholds. Env-overridable so the sensitivity of the cleaning
-# footprint to the cut-off can be measured (see 05_cleaning_audit.py) rather than
+# footprint to the cut-off can be measured (see 05_imputation_audit.py) rather than
 # argued about: a detector that fires on a tenth of the panel is describing normal
 # variation, not anomalies.
 #
-# Default 5.0 (restored from 3.0).  Measured on this panel: at 3x the cleaning
-# touched 11.88% of county-years -- over the 10% budget -- and only 19.4% of the
-# boundary-run splice factors sat within 0.10 dex of a power of ten.  At 5x the
-# footprint is 7.73% of county-years (2.21% of cells) and 27.3% of factors are
-# decimal-like, i.e. the stricter cut throws away proportionally more of the runs
-# that were NOT unit errors.  Loosening to 3.0 mainly adds genuine variation.
+# Default 4.0.  Measured footprint on this panel (share of county-years with at
+# least one variable modified / share of observed cells):
+#     3x  11.88% / 3.72%   -- over the 10% budget
+#     4x   9.15% / 2.74%   <- default
+#     5x   7.73% / 2.21%
+# 3x also looked least like a unit-error detector: only 19.4% of boundary-run
+# splice factors sat within 0.10 dex of a power of ten, against 27.3% at 5x, i.e.
+# loosening the cut mainly pulls in genuine variation.  4x is the setting that
+# meets the budget while staying closest to the original detector.
 _T = lambda k, d: np.log(float(os.environ.get(k, d)))
-TAU_UP   = _T("TAU_UP", 5.0)      # upward spike (more likely an error)
-TAU_DOWN = _T("TAU_DOWN", 5.0)    # downward spike (could be a real bad year)
+TAU_UP   = _T("TAU_UP", 4.0)      # upward spike (more likely an error)
+TAU_DOWN = _T("TAU_DOWN", 4.0)    # downward spike (could be a real bad year)
 JUMP_THR = 0.30      # |Δln| threshold for the caliber synchronized-break scan
 JUMP_SHARE = 0.35    # share of county jumps in a year to call it a caliber candidate
 JUMP_MINN = 10       # require >=this many county jumps in a year before a caliber call
@@ -94,10 +97,14 @@ print(f"1. Loaded io_raw_corrected: {n0} rows, {c0} counties, "
 # rural county-level units; `ag_county` (cropland>=15%) is a carried FLAG, not a
 # filter, so the cleaned panel stays reusable for non-agricultural work.
 
-# Hainan (SID 46) founded 1988 -> drop pre-1988 rows (matters for provincial trends).
+# Hainan (SID 46, founded 1988) pre-1988 rows are KEPT.  They used to be dropped
+# because the level break at provincehood distorted the provincial trend, but the
+# boundary-run splice (4c) is the general treatment for exactly that pattern, and
+# the reference is now a chained median of year-on-year changes, which a single
+# province's level shift no longer moves.  Deleting real observations to protect a
+# reference that is now robust to them is a cost with no remaining benefit.
 n_hn = int(((agg["SID"] == 46) & (agg["year"] < 1988)).sum())
-agg = agg[~((agg["SID"] == 46) & (agg["year"] < 1988))].copy()
-print(f"1c. Hainan: dropped {n_hn} pre-1988 rows (founded 1988)")
+print(f"1c. Hainan: kept {n_hn} pre-1988 rows (handled by the 4c splice, not a drop)")
 
 # ============================================================================
 # (County selection / harmonisation already done in 00d/00e.)
@@ -148,9 +155,18 @@ for v in C.IO_VARS:
     agg[v + "_imp"] = False
 
 # ============================================================================
-# 4b. ERROR -> NA: zeros in inputs, and tiny "low-then-jump" values (>1000x below
-#     the county's own median of positive values) are data errors, not real
-#     production -> set to NA (e.g. 510184 崇州市 land 35.2 then 128513).
+# 4b. ERROR -> NA: zeros, and values <1 in these large-magnitude units.  Both are
+#     unusable rather than merely mis-levelled -- ln(0) is undefined and a sub-1
+#     value cannot be spliced onto anything -- so they stay a deletion.
+#
+#     The old "low-then-jump" rule (anything >1000x below the county median -> NA)
+#     is GONE.  It described the same pattern the 4c splice now repairs -- an
+#     opening block on a different basis -- but deleted it instead of correcting
+#     the level, and because it ran first it pre-empted 4c entirely (it removed
+#     102 of Hainan's 136 pre-1987 Inter_all_real observations before the splice
+#     could see them).  Whatever tiny values survive 4c are isolated single years,
+#     which is exactly the spike-and-revert case step 6 handles, so one mechanism
+#     now covers what two did.
 # ============================================================================
 for v in C.IO_VARS:
     n_zero = int((agg[v] == 0).sum())
@@ -159,53 +175,99 @@ for v in C.IO_VARS:
     sub1 = (agg[v] > 0) & (agg[v] < 1)
     n_sub1 = int(sub1.sum())
     agg.loc[sub1, v] = np.nan
-    med = agg.groupby("countyid")[v].transform(lambda s: s[s > 0].median())
-    low = (agg[v] < med / 1000.0)
-    n_low = int(low.sum())
-    agg.loc[low, v] = np.nan
-    print(f"4b. {v:18s}: {n_zero:4d} zeros, {n_sub1:4d} <1, {n_low:4d} low-then-jump -> NA")
+    print(f"4b. {v:18s}: {n_zero:4d} zeros, {n_sub1:4d} <1 -> NA")
 
 # ============================================================================
-# 4c. BEGINNING/END run -> NA: trim a RUN of leading (or trailing) years that sit
-#     >3x off the local stable median -- catches multi-year boundary spikes with only
-#     one neighbour, e.g. 654002 伊宁市 land 603 -> 4227 -> 70000, 玛多县 land, 临淄区.
+# 4c. LEADING run -> rescale/NA: trim a RUN of opening years that sits far off the
+#     local stable median -- e.g. 654002 伊宁市 land 603 -> 4227 -> 70000, 玛多县, 临淄区.
+#
+#     LEADING ONLY.  The rule exists to repair 农本数据电子化 -- the digitisation of
+#     the early cost-of-production/农业部 ledgers -- which is an EARLY-YEAR problem by
+#     construction: a unit or caliber convention carried over from the paper source
+#     before the series settles onto its modern basis.  Nothing about that story
+#     applies at the end of the panel, and the panel said so: the trailing scan was
+#     producing 373 rescales concentrated in 2011-2016 (85 in 2016 alone), which are
+#     late-panel reporting changes, boundary reorganisations or genuine collapses --
+#     none of them a digitisation slip, and none of them legitimately "spliced" onto
+#     an earlier core.  The trailing branch is therefore gone; end-of-panel anomalies
+#     fall to the spike step, the caliber step and the manual list.
 # ============================================================================
-TAU_END = _T("TAU_END", 5.0)      # run sits this far off the post-jump core
-JUMP5   = _T("JUMP5", 5.0)        # size of the boundary discontinuity
+TAU_END = _T("TAU_END", 4.0)      # run sits this far off the post-jump core
+# The run must lie entirely BEFORE this year.  A calendar window, not a run length.
+#
+# This replaces the old MAXRUN cap (a count of years) and, with it, the question of
+# how many correctly-based years may sit INSIDE the block.  Under a length cap the
+# run had to be a contiguous prefix, so an embedded good year -- 130705 宣化区 land
+# reads 500 / 192 / 100003 / 369 / 31718, where 1983 is already on the modern basis
+# and only 1981, 1982, 1984 are not -- either truncated the block or forced a
+# tolerance knob to admit it.  A calendar window makes the question disappear: the
+# off-basis years inside the window are simply SELECTED, contiguous or not, and
+# on-basis years inside it are left alone because they are not off-core.
+#
+# 1990 is where the 农本数据电子化 story stops being plausible.  The early ledgers
+# were digitised from paper cost-of-production/农业部 sources carrying their own
+# unit conventions; by the 1990s the county returns are natively electronic and on
+# a settled basis, so a large break after that is a real event (boundary change,
+# reporting reform, collapse) and must not be spliced away.
+BOUNDARY_RUN_YEAR = int(os.environ.get("BOUNDARY_RUN_YEAR", 1990))
+JUMP5   = _T("JUMP5", 4.0)        # size of the boundary discontinuity
 def trim_runs(g, v):
-    """Find a SHORT leading/trailing run (<=5 yrs) separated from the stable core by a
-    BIG (>JUMP5) year-on-year jump AND sitting >TAU_END off the post-jump core median.
-    Anchored on the DISCONTINUITY, not the median, so genuine gradual growth -- even
-    100x over the panel, like capital -- is not caught.
+    """Find LEADING years, all before BOUNDARY_RUN_YEAR, that sit >TAU_END off the
+    post-break core median, where the break itself is a BIG (>JUMP5) year-on-year
+    jump.  Anchored on the DISCONTINUITY, not the median, so genuine gradual growth
+    -- even 100x over the panel, like capital -- is not caught.
     e.g. 伊宁市 land 603/712/672/4227 then ~70000; 临淄区 1981-83.
+
+    LEADING AND PRE-1990 ONLY.  The pattern this rule exists for is 农本数据电子化 --
+    the early years were digitised from paper cost-of-production/农业部 ledgers kept
+    on a different basis (unit, caliber, or a re-based splice), so the break is at
+    the OPENING of the panel by construction.  A trailing scan was tried and
+    removed: it has no such story behind it, the late 1990s-2010s county returns are
+    natively electronic and internally consistent, and any late-panel break it
+    "found" would be an ordinary structural change (撤县设区, land reallocation, a
+    genuine collapse) that must NOT be spliced away.
+
+    The run is a SET of off-core years inside the window, not a contiguous prefix.
+    A correctly-based year can sit inside the off-basis stretch -- 130705 宣化区 land
+    reads 500 / 192 / 100003 / 369 / 31718, where 1983 is already on the modern
+    basis and only 1981, 1982, 1984 are not.  Selecting off-core years rather than
+    requiring a block means such a year is simply not selected: it needs no
+    tolerance knob, and it is left untouched instead of being dragged along by a
+    factor that does not apply to it.
 
     Returns [(index_array, factor)] where `factor` splices the run onto the core:
         factor = median(core segment) / median(run)
     so run * factor is level-continuous with the core.  The CALLER decides whether
     to NA the run or rescale it (see BOUNDARY_RUN_MODE).
     """
-    s = g.sort_values("year")[v]
-    s = s.where(s > 0).dropna()
+    s = g.sort_values("year")[["year", v]]
+    s = s[s[v] > 0].dropna()
     out = []
     n = len(s)
     if n >= 8:
-        vals = s.to_numpy(); idx = s.index.to_numpy(); lv = np.log(vals)
-        jstar = 0                                        # leading: LAST big jump in yrs 1..5
-        for j in range(1, min(6, n - 3)):
-            if abs(lv[j] - lv[j-1]) > JUMP5:
-                jstar = j
-        if jstar and all(abs(lv[k] - np.log(np.median(vals[jstar:jstar+5]))) > TAU_END
-                         for k in range(jstar)):
-            out.append((idx[:jstar], float(np.median(vals[jstar:jstar+5]) /
-                                            np.median(vals[:jstar]))))
-        jstar = 0                                        # trailing: LAST big jump near end
-        for j in range(1, min(6, n - 3)):
-            if abs(lv[n-j] - lv[n-j-1]) > JUMP5:
-                jstar = j
-        if jstar and all(abs(lv[n-1-k] - np.log(np.median(vals[n-jstar-5:n-jstar]))) > TAU_END
-                         for k in range(jstar)):
-            out.append((idx[n-jstar:], float(np.median(vals[n-jstar-5:n-jstar]) /
-                                             np.median(vals[n-jstar:]))))
+        vals = s[v].to_numpy(); idx = s.index.to_numpy()
+        yrs = s["year"].to_numpy(); lv = np.log(vals)
+        # j indexes the FIRST core year, so the run is the off-core subset of [0, j).
+        # Every run year must precede BOUNDARY_RUN_YEAR, which caps j at the number
+        # of in-window observations.  Take the largest qualifying j: a single noisy
+        # year later in the window -- a spike step 6 would have smoothed anyway --
+        # must not be allowed to end the search early (620826 land jumps at j=1 with
+        # dlog 9.6, then again at j=2 and j=3 on ordinary noise; stopping at the last
+        # jump left its 1981 value sitting 9,919x below the county median).
+        jmax = min(int((yrs < BOUNDARY_RUN_YEAR).sum()), n - 3)
+        jstar, off_star = 0, None
+        for j in range(1, jmax + 1):
+            if abs(lv[j] - lv[j-1]) <= JUMP5:
+                continue
+            core = np.log(np.median(vals[j:j+5]))
+            off = [k for k in range(j) if abs(lv[k] - core) > TAU_END]
+            # the first year must be off-core, or this is not an opening block on a
+            # different basis at all
+            if off and off[0] == 0:
+                jstar, off_star = j, np.array(off)
+        if jstar:
+            out.append((idx[off_star], float(np.median(vals[jstar:jstar+5]) /
+                                             np.median(vals[off_star]))))
     return out
 
 
@@ -224,35 +286,73 @@ def trim_runs(g, v):
 BOUNDARY_RUN_MODE = os.environ.get("BOUNDARY_RUN_MODE", "decimal")
 _run_log = []
 for v in C.IO_VARS:
-    runs = [(ix, f) for _, g in agg.groupby("countyid") for ix, f in trim_runs(g, v)]
+    # A units slip happens in the SOURCE ledger, which is nominal.  real_gvp is the
+    # only variable this pipeline deflates (Land_serv_q / capital_serv_q /
+    # Inter_all_real already arrive at 2005 prices), so for GVP the run is detected
+    # and the factor measured on the NOMINAL series and then applied to both.
+    # Measured contamination if we did not: the province deflator moves a median of
+    # 1.049 (p95 1.080) across a break year, so up to ~8% of a real_gvp factor would
+    # be price change rather than units -- inside the 0.10 dex gate, but there is no
+    # reason to carry it.
+    det = "GVP_allagr_impute" if v == "real_gvp" else v
+    runs = [(ix, f) for _, g in agg.groupby("countyid") for ix, f in trim_runs(g, det)]
     n_yr = sum(len(ix) for ix, _ in runs)
     if BOUNDARY_RUN_MODE == "na":
         for ix, _ in runs:
             agg.loc[ix, v] = np.nan
         act = "-> NA"
     elif BOUNDARY_RUN_MODE in ("rescale", "decimal"):
-        # "decimal" is the conservative reading of the unit-error story: only splice
-        # when the factor is close to a power of ten (a plausible units/decimal slip
-        # in the digitised source), and NA the rest.  Measured on this panel only
-        # 19.4% of factors sit within 0.10 dex of 10^k (37.3% within 0.20), so
-        # "rescale" applies the unit interpretation well beyond where the evidence
-        # supports it, while "na" discards ~8,300 county-years.  "decimal" splits them.
+        # "decimal": a boundary run is RESCALED if and only if the factor is a power
+        # of ten, and DELETED otherwise.  One rule, no escape hatch.
+        #
+        # The claim being made when we rescale is specific -- the source ledger was
+        # kept in a different unit -- and that claim has a signature: the factor is
+        # exactly 10^k.  So the factor is SNAPPED to that power of ten rather than
+        # applied as the raw median ratio (which is why the logged factors used to
+        # read 0.089838 instead of 0.1: two noisy medians, not a unit).  Anything
+        # else is a level break we can detect but cannot interpret, and splicing it
+        # by an empirical ratio would fabricate the level rather than repair it.
+        #
+        # A magnitude escape hatch (BIG_BREAK: "a break this large cannot be growth,
+        # splice it whatever the factor looks like") used to admit those cases and
+        # was removed.  Being unable to call a break growth is not the same as
+        # knowing what it is.  It also decided neighbouring counties differently for
+        # no reason: 130702 桥东区 and 130703 桥西区 are adjacent districts of 张家口市
+        # with the SAME 1981-84 land basis error, but their empirical ratios came out
+        # 479.8 and 67.6, so one cleared the threshold and was spliced by a
+        # meaningless factor while the other was deleted.  Now both are deleted.
         DEX = float(os.environ.get("BOUNDARY_RUN_DEX", "0.10"))
         n_sp = n_na = 0
         for ix, f in runs:
             ok = np.isfinite(f) and f > 0
+            f_emp = f                       # empirical ratio, kept for the log
+            snapped = False
             if ok and BOUNDARY_RUN_MODE == "decimal":
                 ok = abs(np.log10(f) - round(np.log10(f))) <= DEX
+                if ok:
+                    f = 10.0 ** round(np.log10(f))
+                    snapped = True
             if not ok:
                 agg.loc[ix, v] = np.nan
                 n_na += len(ix)
                 continue
-            agg.loc[ix, v] = agg.loc[ix, v] * f
-            n_sp += len(ix)
             for i in ix:
-                _run_log.append(dict(countyid=agg.at[i, "countyid"], SID=agg.at[i, "SID"],
-                                     var=v, year=agg.at[i, "year"], action="rescale",
-                                     factor=f))
+                before = agg.at[i, v]
+                after = before * f
+                agg.at[i, v] = after
+                if v == "real_gvp":              # keep the nominal series consistent
+                    agg.at[i, "GVP_allagr_impute"] = agg.at[i, "GVP_allagr_impute"] * f
+                _run_log.append(dict(
+                    countyid=agg.at[i, "countyid"], SID=agg.at[i, "SID"], var=v,
+                    year=agg.at[i, "year"], action="rescale",
+                    value_before=before,          # the digitised source value
+                    value_after=after,            # what the panel now carries
+                    factor=f,                     # APPLIED factor (snapped to 10^k if decimal)
+                    factor_empirical=f_emp,       # raw median(core)/median(run) ratio
+                    snapped_to_power_of_ten=snapped,
+                    log10_factor=np.log10(f),
+                    decimal_dex=abs(np.log10(f_emp) - round(np.log10(f_emp)))))
+            n_sp += len(ix)
         act = f"-> {n_sp} rescaled / {n_na} NA"
     else:
         act = "-> kept (no action)"
@@ -335,21 +435,77 @@ def _revert(din, dout):
     tau = TAU_UP if din > 0 else TAU_DOWN
     return abs(din) > tau and abs(dout) > tau
 
+# Half-width of the window used to decide WHICH side of a discontinuity is the
+# anomaly (see _is_the_anomaly).  Wide enough that a couple of bad years cannot
+# carry the median, narrow enough not to span a genuine trend.
+LOCAL_W = int(os.environ.get("LOCAL_W", 5))
+
+
+def _is_the_anomaly(L, i0, i1, loc):
+    """Spike-and-revert is SYMMETRIC: a good plateau sitting between two bad years
+    looks exactly like a bad spike sitting between two good ones.  The local test
+    cannot tell them apart, so it needs an arbiter -- the county's own level.
+
+    Returns True only if the candidate stretch sits FURTHER from the local level
+    than its own anchors do.  If the anchors are the distant ones, they are the
+    anomaly and the stretch is the normal state, so the flag is refused.
+
+    532524 建水县 real_gvp is the case that forced this.  Raw 2000-2005 reads
+    95,300 / 19,534 / 98,287 / 113,000 / 15,172 / 84,083: the bad years are 2001
+    and 2004 alone.  The scan correctly flagged both as single down-spikes, then
+    reached 2002 and found a textbook 2-year up-plateau -- +1.62 in, -2.01 out,
+    the two years within 0.14 of each other -- because BOTH its neighbours were
+    the outliers.  It imputed a perfectly good 98,287 / 113,000 down to
+    17,510 / 15,644, i.e. it repaired the good years to match the broken ones.
+    Against the 1997-2008 local median of 94,255 the arbiter separates them
+    cleanly: the 2001 and 2004 stretches sit 1.57 and 1.83 in logs from the local
+    level against anchors at 0.03, while the 2002-03 stretch sits 0.11 away
+    against anchors at 1.70.
+
+    LIMIT, stated rather than hidden: this is a majority rule.  Where the bad
+    years OUTNUMBER the good ones inside the window, the median follows them and
+    the arbiter inverts.  It cannot do better -- at that point nothing in the
+    series identifies which level is correct, and the case belongs on the manual
+    list.
+    """
+    lo = max(0, i0 - LOCAL_W)
+    hi = min(len(L), i1 + LOCAL_W + 1)
+    w = L[lo:hi]
+    w = w[np.isfinite(w)]
+    if len(w) < 5 or not np.isfinite(loc):
+        return True                     # too little context to overrule the local test
+    d_stretch = abs(np.nanmedian(L[i0:i1+1]) - loc)
+    anchors = [L[k] for k in (i0 - 1, i1 + 1) if 0 <= k < len(L) and np.isfinite(L[k])]
+    if not anchors:
+        return True
+    d_anchor = abs(np.median(anchors) - loc)
+    return d_stretch > d_anchor
+
+
 def detect_stretches(yrs, val):
     """Spike-and-revert stretches: 1-year single, 2-year double, 3-year triple plateau."""
     n = len(val)
     L = np.where(val > 0, np.log(val), np.nan)
     def cons(a, b):   # years a..b consecutive and all finite
         return all(yrs[k+1]-yrs[k] == 1 for k in range(a, b)) and np.isfinite(L[a:b+1]).all()
+
+    def local(i0, i1):
+        lo = max(0, i0 - LOCAL_W); hi = min(n, i1 + LOCAL_W + 1)
+        w = L[lo:hi]; w = w[np.isfinite(w)]
+        return np.median(w) if len(w) else np.nan
+
     out = []; i = 1
     while i < n - 1:
-        if cons(i-1, i+1) and _revert(L[i]-L[i-1], L[i+1]-L[i]):
+        if cons(i-1, i+1) and _revert(L[i]-L[i-1], L[i+1]-L[i]) \
+                and _is_the_anomaly(L, i, i, local(i, i)):
             out.append((int(yrs[i]), int(yrs[i]))); i += 1; continue                 # single
         if i < n-2 and cons(i-1, i+2) and abs(L[i]-L[i+1]) < PLATEAU_TOL \
-                and _revert(L[i]-L[i-1], L[i+2]-L[i+1]):
+                and _revert(L[i]-L[i-1], L[i+2]-L[i+1]) \
+                and _is_the_anomaly(L, i, i+1, local(i, i+1)):
             out.append((int(yrs[i]), int(yrs[i+1]))); i += 2; continue               # double
         if i < n-3 and cons(i-1, i+3) and abs(L[i]-L[i+1]) < PLATEAU_TOL \
-                and abs(L[i+1]-L[i+2]) < PLATEAU_TOL and _revert(L[i]-L[i-1], L[i+3]-L[i+2]):
+                and abs(L[i+1]-L[i+2]) < PLATEAU_TOL and _revert(L[i]-L[i-1], L[i+3]-L[i+2]) \
+                and _is_the_anomaly(L, i, i+2, local(i, i+2)):
             out.append((int(yrs[i]), int(yrs[i+2]))); i += 3; continue               # triple
         i += 1
     return out
@@ -372,7 +528,22 @@ for cid, g in agg.groupby("countyid"):
     meta = dict(SID=sid, state=g["state"].iloc[0], countyid=int(cid),
                 county_name=g["county_name"].iloc[0])
     for v in C.IO_VARS:
-        val = g[v + "_raw"].to_numpy(float)
+        # Detect and impute on the CURRENT cleaned series, not on <var>_raw.
+        #
+        # This step used to read _raw, which is snapshotted before 4b and therefore
+        # still holds the original digitised values -- so the spike test and, worse,
+        # the imputation ANCHORS were blind to every repair steps 3-4d had already
+        # made, and the result was written straight over them.  130705 宣化区 land
+        # is the case that exposed it: 4c correctly rescaled 1981/82/84 by x100, but
+        # this step still saw the raw 500 / 192 / 100003 / 369, called 1983 a spike
+        # (up from 192, down to 369), and imputed it against the UN-rescaled 1982
+        # anchor of 192 -- dragging a perfectly good 100,003 down to 235 and pushing
+        # 1984 up to 61,565.  Both "spikes" were artefacts of comparing repaired
+        # years against unrepaired neighbours.  On the cleaned series the 1983
+        # excursion is +1.65 / -1.00 in logs, and -1.00 does not clear TAU_DOWN, so
+        # it is correctly left alone.  _raw is still kept, untouched, as the audit
+        # trail of what the source said.
+        val = g[v].to_numpy(float)
         stretches = detect_stretches(yrs, val)
         if not stretches:
             continue
@@ -490,6 +661,37 @@ else:
         print(f"   SKIPPED {len(m_skipped)} (fix the list and re-run):")
         for s in m_skipped[:20]:
             print("     ", s)
+
+# ============================================================================
+# 8. BACKSTOP: any cell still sitting >1000x below its own county median -> NA.
+#
+#     Nothing upstream can reach these.  4c only scans the panel boundaries, and
+#     what survives here is an INTERIOR lone year (typically 1982-83, one case in
+#     2015) that the spike step also missed because its neighbours are themselves
+#     part of the disturbed opening block, so the revert test never fires.  A
+#     value three orders of magnitude below the county's own level is not a level
+#     shift to be spliced -- there is no run to preserve the shape of -- so it is
+#     deleted rather than corrected.  This is the deliberate floor of the cleaner:
+#     if the earlier rules improve, this count goes to zero on its own.
+# ============================================================================
+LOW_FLOOR = float(os.environ.get("LOW_FLOOR", 1000.0))
+alog_rows_floor, n_floor = [], 0
+for v in C.IO_VARS:
+    x = pd.to_numeric(agg[v], errors="coerce")
+    med = x.where(x > 0).groupby(agg["countyid"]).transform("median")
+    bad = (x > 0) & (med > 0) & (x < med / LOW_FLOOR)
+    n_floor += int(bad.sum())
+    if bad.any():
+        for i in agg.index[bad]:
+            alog_rows_floor.append(dict(countyid=agg.at[i, "countyid"], SID=agg.at[i, "SID"],
+                                        var=v, year=agg.at[i, "year"], action="floor_NA",
+                                        value_before=float(x[i]), ratio=float(med[i] / x[i])))
+    agg.loc[bad, v] = np.nan
+print(f"\n8. Extreme-low backstop (< county median / {LOW_FLOOR:g}): {n_floor} cells -> NA")
+if alog_rows_floor:
+    pd.DataFrame(alog_rows_floor).to_csv(os.path.join(C.DQ_DIR, "extreme_low_floor.csv"),
+                                         index=False, encoding="utf-8-sig")
+    print("   -> dq/extreme_low_floor.csv")
 
 # ============================================================================
 # SAVE cleaned panel

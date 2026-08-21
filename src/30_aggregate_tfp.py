@@ -9,7 +9,7 @@ their own copy of the Tornqvist aggregator (12_aggregate_compare, 15_tfp_winsori
 weighting rule cannot silently apply to one panel of the paper and not another.
 
 ESTIMATORS
-  DEA    sequential-NIRS Malmquist, county lnM        (20_dea_vs_fe_tfp.py)
+  DEA    sequential-NIRS Malmquist, county lnM        (20_dea_tfp.py)
   SFA    BC92 land-normalized, d ln_tfp_chen          (21_sfa_bc92.do, full panel)
   SOL    CRS Solow residual, county-level             (transparent cross-check)
 

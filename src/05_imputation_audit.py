@@ -114,6 +114,79 @@ def main():
         print(f"   {100*lo:5.1f}-{100*hi:5.1f}% touched : {n:5,d} counties "
               f"({100*n/len(g):5.1f}%)")
 
+    # ------------------------------------------------------------------
+    # Category breakdown, and the same footprint at the ROW level.
+    #
+    # Two denominators, because they answer different questions.  A cell is one
+    # county-year x variable and is the unit cleaning actually acts on -- it is the
+    # honest denominator for "how much of the data did we touch".  A ROW is one
+    # county-year and counts as touched if ANY of its five variables was; that is
+    # the denominator that matters for the frontier, which needs all five present
+    # and drops the whole observation if one is missing.  The row share is always
+    # the larger of the two and is the number to quote when asked how much of the
+    # panel the cleaning moved.
+    # ------------------------------------------------------------------
+    floor_p = os.path.join(C.DQ_DIR, "extreme_low_floor.csv")
+    floor = pd.read_csv(floor_p) if os.path.exists(floor_p) else pd.DataFrame()
+    man_p = os.path.join(C.CLEAN_DIR, "manual_impute_log.csv")
+    man = pd.read_csv(man_p) if os.path.exists(man_p) else pd.DataFrame()
+
+    n_cells = n_rows * len(C.IO_VARS)
+    n_present_cells = int(t.cells_present.sum())
+    n_auto = int(sum(int((m[v + "_imp"] == True).sum()) for v in C.IO_VARS))
+    n_manual = len(man)
+    n_resc = len(rescale)
+    n_floor = len(floor)
+    n_na_all = int(t.set_to_NA.sum())
+
+    print("\n" + "=" * 74)
+    print("FOOTPRINT BY CATEGORY")
+    print("=" * 74)
+    print(f"{'category':30s} {'cells':>9s} {'% of present':>13s} {'% of all cells':>15s}")
+    cats = [("rescaled to a power of ten", n_resc),
+            ("imputed (auto, spike+revert)", n_auto),
+            ("imputed (manual list)", n_manual),
+            ("deleted -> NA (all rules)", n_na_all),
+            ("   of which extreme-low floor", n_floor)]
+    for lab, k in cats:
+        print(f"{lab:30s} {k:9,d} {100*k/n_present_cells:12.2f}% {100*k/n_cells:14.2f}%")
+    tot = n_resc + n_auto + n_manual + n_na_all
+    print("-" * 74)
+    print(f"{'TOTAL modified':30s} {tot:9,d} {100*tot/n_present_cells:12.2f}% "
+          f"{100*tot/n_cells:14.2f}%")
+    print(f"\ndenominators: {n_present_cells:,d} present cells, {n_cells:,d} total cells "
+          f"({n_rows:,d} county-years x {len(C.IO_VARS)} variables)")
+
+    # row level: a county-year is touched if ANY variable in it was
+    touched_row = pd.Series(False, index=m.index)
+    imputed_row = pd.Series(False, index=m.index)
+    na_row = pd.Series(False, index=m.index)
+    for v in C.IO_VARS:
+        raw = pd.to_numeric(m[v + "_raw"], errors="coerce")
+        cur = pd.to_numeric(m[v], errors="coerce")
+        imp = m[v + "_imp"] == True
+        gone = raw.notna() & (raw > 0) & cur.isna()
+        imputed_row |= imp
+        na_row |= gone
+        touched_row |= (imp | gone)
+    if len(rescale):
+        key = set(zip(rescale.countyid, rescale.year))
+        resc_row = pd.Series([ (c, y) in key for c, y in zip(m.countyid, m.year) ],
+                             index=m.index)
+        touched_row |= resc_row
+    else:
+        resc_row = pd.Series(False, index=m.index)
+
+    print("\n" + "=" * 74)
+    print("FOOTPRINT AT THE COUNTY-YEAR (ROW) LEVEL")
+    print("=" * 74)
+    for lab, s in [("rows with any rescale", resc_row),
+                   ("rows with any imputation", imputed_row),
+                   ("rows with any deletion", na_row),
+                   ("rows touched in ANY way", touched_row)]:
+        k = int(s.sum())
+        print(f"{lab:30s} {k:9,d} of {n_rows:,d} county-years  = {100*k/n_rows:6.2f}%")
+
     t.to_csv(os.path.join(C.DQ_DIR, "imputation_audit.csv"), index=False)
     print(f"\nsaved -> dq/imputation_audit.csv")
 
